@@ -2,9 +2,9 @@
 
 # Annotated.com
 
-A Chrome extension for snipping or recording any part of a web page. Highlight the words that matter, type your take right on the screen, and it lands under your snip with the source link. Save it as a PNG or MP4 ready for X, or share it in a chat that everyone with Annotated.com sees, in Chrome's side panel.
+**Website: https://renshubtc.github.io/annotated/** · [Demo video](https://youtu.be/HK3gKABrgu4)
 
-[Website](https://renshubtc.github.io/annotated/) · [Demo video](https://youtu.be/HK3gKABrgu4)
+A Chrome extension for snipping or recording any part of a web page. Highlight the words that matter, type your take right on the screen, and it lands under your snip with the source link. Save it as a PNG or MP4 ready for X, or share it in a chat that everyone with Annotated.com sees, in Chrome's side panel.
 
 ## Made for the Annotated.com bounty
 
