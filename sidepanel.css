@@ -1,0 +1,540 @@
+/* Newsreader, like everything in Annotated.com (bundled; SIL Open Font License, fonts/OFL.txt). */
+@font-face {
+  font-family: 'Newsreader Snip';
+  font-style: normal;
+  font-display: block;
+  font-weight: 200 800;
+  src: url(fonts/newsreader-vietnamese-opsz-normal.woff2) format('woff2-variations');
+  unicode-range: U+0102-0103,U+0110-0111,U+0128-0129,U+0168-0169,U+01A0-01A1,U+01AF-01B0,U+0300-0301,U+0303-0304,U+0308-0309,U+0323,U+0329,U+1EA0-1EF9,U+20AB;
+}
+@font-face {
+  font-family: 'Newsreader Snip';
+  font-style: normal;
+  font-display: block;
+  font-weight: 200 800;
+  src: url(fonts/newsreader-latin-ext-opsz-normal.woff2) format('woff2-variations');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Newsreader Snip';
+  font-style: normal;
+  font-display: block;
+  font-weight: 200 800;
+  src: url(fonts/newsreader-latin-opsz-normal.woff2) format('woff2-variations');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+
+/* A light, quiet look: a near-white page, white surfaces with hairline borders, warm greys. 14 px for
+   text, 12 px for small labels. Pressed buttons go black, like the bar. */
+:root {
+  color-scheme: light;
+  --page: #fcfcfb;
+  --card: #ffffff;
+  --line: #e3e3e2;
+  --line-strong: #cececd;
+  --hover: #f0f0ef;
+  --row: #f5f5f4;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --ink-3: #898781;
+  --press: #0b0b0b;
+  --live: #22a06b;
+  --blue: #3390ec; /* yours (a like), X links on hover, search matches */
+  --yellow: #ffe24d; /* Annotated.com's yellow (the logo, the highlighter): search on */
+  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ui: 'Newsreader Snip', Georgia, 'Times New Roman', serif;
+  --emoji: 'Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', sans-serif;
+  --text: 14px;
+  --small: 12px;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; background: var(--page); color: var(--ink); font: 400 var(--text)/1.43 var(--ui); -webkit-font-smoothing: antialiased; }
+body { display: flex; flex-direction: column; overflow: hidden; }
+svg.i { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+button { font: inherit; color: inherit; }
+[hidden] { display: none !important; }
+
+/* The feed: oldest at the top, newest at the bottom, like any chat. (Chrome's own panel header already
+   says Annotated.com, so the feed starts right at the top.) */
+.feed { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px 8px 8px; }
+/* Scrollbars: thin and out of sight; they show while you scroll (or point at them) and fade away a
+   moment after. */
+.feed, #text { scrollbar-width: thin; scrollbar-color: transparent transparent; transition: scrollbar-color 0.3s; }
+.feed.sb-on, #text.sb-on { scrollbar-color: rgba(11, 11, 11, 0.3) transparent; transition-duration: 0.08s; }
+.older { margin: 8px 0; text-align: center; color: var(--ink-3); font-size: var(--small); }
+.list { list-style: none; margin: 0; padding: 0; }
+
+.day { display: flex; align-items: center; gap: 10px; margin: 10px 4px 6px; color: var(--ink-3); font: 500 var(--small)/1 var(--ui); }
+.day::before, .day::after { content: ''; flex: 1 1 auto; height: 1px; background: var(--line); }
+
+.post {
+  position: relative;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  column-gap: 10px;
+  padding: 8px 8px 6px;
+  border-radius: 10px;
+  outline: none;
+  transition: background-color 0.12s;
+}
+.post:hover, .post.menu-on { background: var(--row); }
+.post:focus-visible { box-shadow: inset 0 0 0 2px var(--ink); }
+.post.arrive { animation: arrive 0.28s ease-out both; }
+@keyframes arrive { from { opacity: 0; transform: translateY(4px); } }
+.post.flash { animation: flash 1.2s ease-out; }
+@keyframes flash { 0%, 30% { background: rgba(11, 11, 11, 0.08); } 100% { background: transparent; } }
+.post.sending { opacity: 0.6; }
+.avatar {
+  grid-row: 1 / span 3;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: hsl(var(--h, 30) 38% 90%);
+  color: hsl(var(--h, 30) 40% 26%);
+  font: 600 var(--small)/1 var(--ui);
+  user-select: none;
+}
+img.avatar { object-fit: cover; background: var(--row); }
+/* The name line: name, "you", then when it was posted and how many have seen it, like X
+   ("Oct 13, 2026 · 5:04 AM · 212 Views", the number in bold). On a narrow panel the date goes under. */
+.meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 6px; min-width: 0; }
+.name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+/* Signed in with X: @handle, underlined; blue on hover; opens their X profile. */
+a.name { color: inherit; text-decoration: underline; text-decoration-color: currentColor; text-decoration-thickness: 1px; text-underline-offset: 2px; transition: color 0.12s; }
+a.name:hover { color: var(--blue); }
+a.name:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 3px; }
+.you { flex: none; color: var(--ink-3); font-size: var(--small); }
+time { flex: none; color: var(--ink-3); font-size: var(--small); font-variant-numeric: tabular-nums; }
+.when { flex: none; color: var(--ink-3); font-size: var(--small); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.views b { color: var(--ink); font-weight: 700; }
+.body { grid-column: 2; min-width: 0; }
+.text { margin: 1px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.text a { color: inherit; text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 2px; }
+.text a:hover { text-decoration-color: var(--ink); }
+
+
+/* Replies: each one right under the post it answers (a reply to a reply under that one, and so on),
+   one below another, all the same width. */
+/* A reply on its own (its post isn't in the feed): whom it answers. */
+.replyto { display: none; align-items: center; gap: 4px; margin: 2px 0 1px; padding: 0; border: 0; background: none; color: var(--ink-3); font: 500 var(--small)/1.3 var(--ui); cursor: pointer; }
+.replyto .i { width: 12px; height: 12px; }
+.replyto:hover:not(:disabled) { color: var(--ink-2); text-decoration: underline; }
+.replyto:disabled { cursor: default; }
+.post.orphan .replyto, .results .replyto { display: inline-flex; }
+/* The post you're answering. */
+.post.target { background: hsl(212 80% 56% / 0.08); box-shadow: inset 0 0 0 1.5px hsl(212 80% 56% / 0.45); }
+
+/* An annotation (made with Annotated.com) takes the whole post: the picture or video edge to edge, as
+   wide as the post. Who posted it, when, and how many have seen it sit on a small white label at its
+   top left, on the picture: their face, then their name over the date, time and views. Whom it
+   answers and any words they added go under it, in white like its caption (lined up with its text). */
+.post.annot { display: block; padding: 6px; }
+.post.annot .body { min-width: 0; }
+.post.annot .card { position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.post.annot .meta {
+  position: absolute;
+  z-index: 1;
+  top: 8px;
+  left: 8px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0 8px;
+  max-width: calc(100% - 16px);
+  padding: 6px 14px 6px 8px;
+  border-radius: 23px;
+  background: rgba(255, 255, 255, 0.93);
+  -webkit-backdrop-filter: blur(12px) saturate(1.5);
+  backdrop-filter: blur(12px) saturate(1.5);
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.16), 0 2px 10px rgba(0, 0, 0, 0.16);
+  line-height: 1.3;
+}
+.post.annot .meta .avatar { grid-row: 1 / span 2; }
+.post.annot .who { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.post.annot .when { grid-column: 2; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.post.annot .head { padding: 8px 3.3% 9px; background: #fff; }
+.post.annot .head:not(:has(> .text)) { display: none; }
+.post.annot.orphan .head:has(> .replyto), .results .post.annot .head:has(> .replyto) { display: block; }
+.post.annot .text { margin: 0; }
+.post.annot .replyto { margin: 0 0 4px; }
+.post.annot .media { display: block; width: 100% !important; max-width: none; min-height: 62px; margin: 0; border: 0; border-radius: 0; background: #fff; }
+.post.annot .media img, .post.annot .media video { width: 100%; height: auto; max-height: 75vh; object-fit: contain; }
+.post.annot .media video { background: #fff; }
+.post.annot .media.missing { padding: 52px 3.3% 12px; }
+
+/* Pictures and videos: as wide as the panel allows, never taller than 360 px. */
+.media { display: block; margin: 6px 0 2px; max-width: 100%; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: #fff; }
+.media img, .media video { display: block; max-width: 100%; max-height: 360px; width: auto; height: auto; object-fit: cover; }
+.media video { object-fit: contain; background: #000; }
+a.media { width: fit-content; cursor: zoom-in; }
+.media.missing { padding: 10px 12px; color: var(--ink-3); font-size: var(--small); }
+
+/* Likes: one neat pill, 👍 then who (up to three round faces, overlapping,
+   then a number), everything centred on one line and the last face inset evenly from the pill's
+   round end. Others' likes are a light tint of the like blue; yours is the solid blue. */
+.likes {
+  --chip: #e5effa;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  margin: 6px 0 1px;
+  padding: 0 3px 0 6px;
+  border: 0;
+  border-radius: 13px;
+  background: var(--chip);
+  color: #1f6fbf;
+  font: 600 var(--small)/1 var(--ui);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: transform 0.3s var(--spring), background-color 0.12s;
+}
+.likes:hover { transform: translateY(-1px); background: #d9e8f8; --chip: #d9e8f8; }
+.likes:active { transform: scale(0.96); }
+.likes .emo { display: block; width: 17px; height: 17px; font: 400 15px/17px var(--emoji); text-align: center; }
+.likes .faces { display: flex; align-items: center; }
+.likes .face { flex: none; width: 20px; height: 20px; margin-left: -6px; border-radius: 50%; display: grid; place-items: center; background: hsl(var(--h, 30) 38% 88%); color: hsl(var(--h, 30) 40% 26%); font: 600 10px/1 var(--ui); box-shadow: 0 0 0 2px var(--chip); }
+.likes .face:first-child { margin-left: 0; }
+.likes .n { padding: 0 6px 0 1px; }
+.likes img.face { object-fit: cover; }
+.likes.mine { --chip: var(--blue); background: var(--blue); color: #fff; }
+.likes.mine:hover { --chip: #2b84dd; background: #2b84dd; }
+
+.empty { margin: 48px 20px; text-align: center; color: var(--ink-2); }
+.empty p { margin: 0 0 6px; }
+.empty .title { color: var(--ink); font-weight: 600; }
+
+/* "New posts": appears when something arrives while you're reading further up. A capsule of clear
+   glass, like the bar on the page: glass.js bends the chat behind it at the rim, lifts it
+   towards white so the black words read over anything, and lights the edge (until its filter is in
+   place, and with Reduce Transparency, frosted white stands in). It condenses in when it appears. */
+.newer {
+  position: fixed;
+  left: 50%;
+  bottom: var(--dock-h, 90px);
+  translate: -50% -10px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 15px 0 12px;
+  border: 0;
+  border-radius: 17px;
+  color: var(--ink);
+  font: 600 var(--small)/1 var(--ui);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0) 55%),
+    rgba(255, 255, 255, 0.6);
+  -webkit-backdrop-filter: blur(14px) saturate(1.8) brightness(1.1);
+  backdrop-filter: blur(14px) saturate(1.8) brightness(1.1);
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.16),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.55),
+    inset 1.5px 1.5px 1px -1px #fff,
+    inset -1.5px -1.5px 1px -1px rgba(255, 255, 255, 0.8),
+    0 8px 24px rgba(0, 0, 0, 0.2),
+    0 2px 6px rgba(0, 0, 0, 0.12);
+  cursor: pointer;
+  transition: scale 0.2s var(--spring);
+}
+.newer.lg {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0) 45%);
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.14),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.5),
+    0 10px 26px rgba(0, 0, 0, 0.2),
+    0 2px 8px rgba(0, 0, 0, 0.12);
+}
+.newer:hover { scale: 1.04; }
+.newer:active { scale: 0.96; transition-duration: 0.08s; }
+.newer .i { width: 12px; height: 12px; stroke-width: 1.9; }
+.newer.materialize { animation: glass-materialize 0.42s var(--spring) both; }
+@keyframes glass-materialize {
+  from { transform: scale(0.82); opacity: 0; filter: blur(5px) brightness(1.3); }
+  60% { opacity: 1; }
+  to { transform: none; opacity: 1; filter: none; }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .newer { background: rgba(246, 246, 248, 0.97); -webkit-backdrop-filter: blur(30px); backdrop-filter: blur(30px); }
+}
+@media (prefers-contrast: more) {
+  .newer { background: #fff; -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: 0 0 0 1.5px #000, 0 6px 20px rgba(0, 0, 0, 0.45); }
+}
+
+/* Right-click menu, in clear glass like the bar: glass.js bends the chat behind
+   it at a thin rim and frosts the middle, so its words read over anything (until its filter is in
+   place, and with Reduce Transparency, frosted white stands in). */
+.menu {
+  position: fixed;
+  z-index: 20;
+  min-width: 168px;
+  padding: 5px;
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 55%),
+    rgba(255, 255, 255, 0.74);
+  -webkit-backdrop-filter: blur(18px) saturate(1.8);
+  backdrop-filter: blur(18px) saturate(1.8);
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.16),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.55),
+    inset 1.5px 1.5px 1px -1px #fff,
+    inset -1.5px -1.5px 1px -1px rgba(255, 255, 255, 0.8),
+    0 12px 32px rgba(0, 0, 0, 0.2),
+    0 2px 8px rgba(0, 0, 0, 0.1);
+  transform-origin: var(--ox, 0) var(--oy, 0);
+  animation: menu-in 0.14s ease-out;
+  outline: none;
+}
+.menu.lg {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0) 45%);
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.14),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.5),
+    0 12px 32px rgba(0, 0, 0, 0.2),
+    0 2px 8px rgba(0, 0, 0, 0.1);
+}
+@media (prefers-reduced-transparency: reduce) {
+  .menu { background: rgba(246, 246, 248, 0.98); -webkit-backdrop-filter: blur(30px); backdrop-filter: blur(30px); }
+}
+@media (prefers-contrast: more) {
+  .menu { background: #fff; -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: 0 0 0 1.5px #000, 0 6px 20px rgba(0, 0, 0, 0.45); }
+}
+@keyframes menu-in { from { opacity: 0; transform: scale(0.94); } }
+.menu button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font: 400 var(--text)/1 var(--ui);
+  text-align: left;
+  cursor: pointer;
+  outline: none;
+}
+.menu button .i { width: 16px; height: 16px; color: var(--ink-2); }
+.menu button:hover, .menu button:focus-visible { background: rgba(0, 0, 0, 0.06); }
+.menu button.armed { background: var(--press); color: #fff; }
+.menu button.armed .i { color: #fff; }
+.menu button.on .i { fill: currentColor; color: var(--blue); }
+
+/* File a claim: a small form over the chat (from a post's right-click menu). */
+.claim {
+  width: min(360px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  padding: 18px 18px 14px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.16), 0 16px 40px rgba(0, 0, 0, 0.24);
+  font: 400 var(--text)/1.43 var(--ui);
+}
+.claim::backdrop { background: rgba(20, 20, 18, 0.28); }
+.claim h2 { margin: 0 0 6px; font: 600 17px/1.25 var(--ui); }
+.claim .note { margin: 0 0 6px; color: var(--ink-2); font-size: var(--small); }
+.claim label { display: block; margin: 10px 0 4px; color: var(--ink-2); font-size: var(--small); font-weight: 500; }
+.claim textarea, .claim input[type='text'] {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  font: 400 var(--text)/1.4 var(--ui);
+  resize: vertical;
+}
+.claim textarea:focus, .claim input[type='text']:focus { outline: 2px solid var(--ink); outline-offset: 1px; border-color: transparent; }
+.claim label.check { display: flex; gap: 8px; align-items: flex-start; margin-top: 12px; color: var(--ink); font-weight: 400; cursor: pointer; }
+.claim label.check input { flex: none; margin: 2px 0 0; accent-color: var(--press); }
+.claim .err { margin: 10px 0 0; color: #c62828; font-size: var(--small); }
+.claim .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.claim .actions button { height: 32px; padding: 0 14px; border-radius: 8px; font: 500 var(--text)/1 var(--ui); cursor: pointer; }
+.claim .ghost { border: 1px solid var(--line-strong); background: #fff; color: var(--ink); }
+.claim .ghost:hover { background: var(--hover); }
+.claim .primary { border: 0; background: var(--press); color: #fff; }
+.claim .primary:disabled { opacity: 0.6; cursor: default; }
+.claim button:focus-visible, .claim label.check input:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+/* The box at the bottom: one 48 px line to write in, send on the right; the tools sit under it. */
+.dock { flex: none; padding: 6px 12px 10px; }
+.banner { display: flex; align-items: center; gap: 8px; margin: 0 2px 8px; color: var(--ink-2); font-size: var(--small); }
+.banner .i { width: 13px; height: 13px; color: var(--ink); }
+.banner span { flex: 1 1 auto; min-width: 0; }
+.banner button { flex: none; height: 24px; padding: 0 9px; border: 1px solid var(--line); border-radius: 7px; background: #fff; font: 500 var(--small)/1 var(--ui); cursor: pointer; }
+.banner button:hover { background: var(--hover); }
+.banner button:active { background: var(--press); border-color: var(--press); color: #fff; }
+
+.composer {
+  position: relative;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 14px rgba(0, 0, 0, 0.035);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.composer:focus-within { border-color: var(--line-strong); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 6px 18px rgba(0, 0, 0, 0.05); }
+.composer.busy { pointer-events: none; }
+.input { display: flex; align-items: flex-end; }
+#text {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 46px;
+  min-height: 46px;
+  max-height: 168px;
+  margin: 0;
+  padding: 13px 8px 13px 14px;
+  border: 0;
+  outline: 0;
+  resize: none;
+  background: transparent;
+  color: var(--ink);
+  font: 400 var(--text)/20px var(--ui);
+  overflow-y: auto;
+}
+#text::placeholder, #q::placeholder { color: var(--ink-3); opacity: 1; }
+/* Search: the same box, searching the chat as you type (the search button under it, right of +,
+   turns it on and off). */
+#q {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 46px;
+  margin: 0;
+  padding: 13px 8px 13px 14px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font: 400 var(--text)/20px var(--ui);
+}
+#q::-webkit-search-cancel-button { display: none; }
+body.searching .send, body.searching #replying, body.searching #attach { display: none !important; }
+.results .post { cursor: pointer; }
+.results mark { background: rgba(51, 144, 236, 0.2); color: inherit; border-radius: 3px; padding: 0 1px; }
+#text:placeholder-shown { overflow-y: hidden; }
+.send {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  margin: 0 8px 8px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--press);
+  color: #fff;
+  cursor: pointer;
+  transition: transform 0.35s var(--spring), background-color 0.15s;
+}
+.send .i { width: 15px; height: 15px; stroke-width: 1.9; }
+.send:hover { transform: translateY(-1px) scale(1.06); }
+.send:active { transform: scale(0.95); }
+.send:disabled { background: var(--line); cursor: default; transform: none; }
+
+/* Who you're replying to (inside the box, above your text). */
+.replying { display: flex; align-items: center; gap: 8px; margin: 8px 8px 0; padding: 5px 4px 5px 10px; border-left: 3px solid hsl(var(--h, 30) 45% 48%); border-radius: 4px 8px 8px 4px; background: hsl(var(--h, 30) 40% 50% / 0.08); min-height: 30px; }
+.replying .q { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; cursor: pointer; }
+/* Their annotation's caption, cut from its picture or video, as wide as the box; a long one shows its
+   start and fades out. */
+.replying .qcapbox { max-height: 72px; overflow: hidden; border-radius: 4px; box-shadow: 0 0 0 0.5px var(--line-strong); background: #fff; }
+.replying .qcapbox.clip { -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
+.replying .qcap { display: block; }
+.replying .qtext { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; color: var(--ink-2); font: 400 var(--small)/1.35 var(--ui); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Under the box: attach, search, your name, characters left, who's online. */
+.tools { display: flex; align-items: center; gap: 4px; min-height: 30px; margin-top: 6px; padding: 0 2px; }
+.tool {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: transform 0.35s var(--spring), background-color 0.15s, color 0.15s;
+}
+.tool .i { width: 16px; height: 16px; }
+.tool:hover { background: var(--hover); transform: translateY(-1px) scale(1.06); }
+.tool:active { background: var(--press); color: #fff; transform: scale(0.95); }
+/* Search on (the box is a search box): Annotated.com's yellow, with a black symbol. */
+.find[aria-pressed='true'], .find[aria-pressed='true']:hover { background: var(--yellow); color: var(--ink); box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.2); }
+.me {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-3);
+  font: 400 var(--small)/1 var(--ui);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.me b { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--ink-2); font-weight: 500; }
+.me .i { width: 11px; height: 11px; opacity: 0; transition: opacity 0.12s; }
+.me:hover { background: var(--hover); }
+.me:hover .i, .me:focus-visible .i { opacity: 1; }
+/* Signed in with X: "Posting as @handle", the handle opening your X profile. */
+.me-x { cursor: default; }
+.me-x:hover { background: transparent; }
+.me-x a { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--ink-2); font-weight: 500; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
+.me-x a:hover { color: var(--blue); }
+.me-edit { flex: 0 1 180px; min-width: 0; height: 26px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 8px; outline: 0; background: #fff; color: var(--ink); font: 500 var(--small)/1 var(--ui); }
+.left { flex: 1 1 auto; text-align: right; color: var(--ink-3); font: 500 var(--small)/1 var(--ui); font-variant-numeric: tabular-nums; }
+.left.over { color: #c62828; font-weight: 700; } /* past 280: how many to cut */
+.online { flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 0 4px 0 6px; color: var(--ink-3); font: 500 var(--small)/1 var(--ui); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.online .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--live); box-shadow: 0 0 0 3px rgba(34, 160, 107, 0.14); }
+
+/* What you're about to post. */
+.attach { position: relative; display: flex; align-items: center; gap: 10px; margin: 8px 8px 0; padding: 6px; border: 1px solid var(--line); border-radius: 10px; background: var(--page); overflow: hidden; }
+.attach .thumb { position: relative; flex: none; width: 48px; height: 48px; border-radius: 7px; overflow: hidden; background: #fff; box-shadow: inset 0 0 0 1px var(--line); }
+.attach .thumb img, .attach .thumb video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.attach .thumb .i { position: absolute; left: 50%; top: 50%; width: 14px; height: 14px; translate: -50% -50%; fill: #fff; stroke: none; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5)); }
+.attach .meta { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; align-items: stretch; gap: 3px; }
+.fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 var(--small)/1.2 var(--ui); }
+.fsize { color: var(--ink-3); font: 400 var(--small)/1.2 var(--ui); font-variant-numeric: tabular-nums; }
+.mini { flex: none; display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--ink-2); cursor: pointer; }
+.mini .i { width: 12px; height: 12px; }
+.mini:hover { background: var(--hover); }
+.mini:active { background: var(--press); color: #fff; }
+.progress { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--line); }
+.progress i { display: block; height: 100%; width: calc(var(--p, 0) * 100%); background: var(--ink); transition: width 0.15s linear; }
+
+/* Getting a picture or video ready for the box. */
+.spin { position: absolute; inset: 0; margin: auto; width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--ink); animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Dragging a file over the panel. */
+.drop { position: fixed; inset: 8px; z-index: 10; display: grid; place-items: center; border: 1.5px dashed var(--ink-3); border-radius: 16px; background: rgba(252, 252, 251, 0.92); pointer-events: none; }
+.drop p { margin: 0; font-weight: 600; }
+
+.find:focus-visible, .tool:focus-visible, .send:focus-visible, .me:focus-visible, .mini:focus-visible, .newer:focus-visible, .banner button:focus-visible, .replyto:focus-visible, .likes:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+@keyframes glass-fade { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .post.arrive, .post.flash, .spin, .menu { animation: none; }
+  .newer.materialize { animation: glass-fade 0.2s ease-out both; }
+  .newer:hover, .newer:active { scale: none; }
+  .tool, .send, .post, .likes { transition: none; }
+  .tool:hover, .send:hover, .likes:hover { transform: none; }
+}

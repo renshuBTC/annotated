@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Annotated.com</title>
+<link rel="stylesheet" href="ui.css">
+<script type="module" src="ui.js"></script>
+</head>
+<body>
+<!-- Icons (SF Symbols-like line icons) -->
+<svg class="sprite" aria-hidden="true">
+  <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8.6c0-1.2 1-2.1 2.1-2.1h1.6l1.2-1.8h6.2l1.2 1.8h1.6c1.2 0 2.1 1 2.1 2.1v8.2c0 1.2-1 2.1-2.1 2.1H6.1C5 18.9 4 17.9 4 16.8z"/><circle cx="12" cy="12.7" r="3.3"/></symbol>
+  <symbol id="i-video" viewBox="0 0 24 24"><rect x="2.8" y="6.6" width="12.6" height="10.8" rx="2.6"/><path d="M15.4 10.5l4.5-2.6c.6-.4 1.4.1 1.4.8v6.6c0 .7-.8 1.2-1.4.8l-4.5-2.6"/></symbol>
+  <!-- Select an area: a dashed box, dragged out with the crosshair. -->
+  <symbol id="i-area" viewBox="0 0 24 24"><rect x="3" y="3.4" width="13.2" height="11.2" rx="2" stroke-dasharray="2.5 2.2"/><path d="M18.6 14.6v6.2M15.5 17.7h6.2"/></symbol>
+  <!-- Select a post, image or video: a card, clicked with the pointer. -->
+  <symbol id="i-element" viewBox="0 0 24 24"><rect x="3" y="3.6" width="14.4" height="11.4" rx="2.2"/><path d="M6.4 7.6h7.4M6.4 10.8h4.2"/><path d="M12.9 11.9v8.6l2.3-2.1 1.7 3.6 1.7-.8-1.7-3.5h3.2z" fill="currentColor" stroke-width="1.2"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="M6.8 6.8l10.4 10.4M17.2 6.8L6.8 17.2"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4.4v10.4m0 0l-4.3-4.3m4.3 4.3l4.3-4.3M5.4 19.6h13.2"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.6" y="8.6" width="11" height="11" rx="2.4"/><path d="M15.4 8.6V6.5c0-1.1-.9-2-2-2H6.5c-1.1 0-2 .9-2 2v6.9c0 1.1.9 2 2 2h2.1"/></symbol>
+  <!-- The Annotated.com logo (icons/icon.svg: Newsreader's "a" on its yellow rounded square). -->
+  <symbol id="i-logo" viewBox="0 0 24 24"><rect x="3.4" y="3.4" width="17.2" height="17.2" rx="3.9" fill="#ffe24d" stroke="currentColor" stroke-opacity="0.28" stroke-width="1"/><path fill="#000" stroke="none" d="M12.89 10.67 12.91 11.12Q11.93 11.45 11.32 11.76Q10.71 12.06 10.39 12.39Q10.07 12.71 9.95 13.07Q9.83 13.44 9.83 13.89Q9.83 14.66 10.19 15.02Q10.54 15.39 11.1 15.39Q11.49 15.39 11.78 15.23Q12.07 15.07 12.23 14.75Q12.39 14.43 12.39 13.93V9.57Q12.39 8.75 11.97 8.3Q11.54 7.86 10.67 7.86Q10.24 7.86 9.85 7.9Q9.47 7.95 9.22 8.04L9.65 7.55Q9.59 8.09 9.52 8.49Q9.46 8.9 9.37 9.17Q9.28 9.44 9.17 9.59Q9.02 9.78 8.74 9.89Q8.46 10.01 8.13 10.01Q7.7 10.01 7.48 9.85Q7.26 9.7 7.26 9.42Q7.26 9.01 7.66 8.59Q8.07 8.16 8.74 7.81Q9.41 7.45 10.23 7.23Q11.04 7.01 11.85 7.01Q13.04 7.01 13.75 7.35Q14.47 7.7 14.79 8.32Q15.11 8.95 15.11 9.8V14.98Q15.11 15.24 15.19 15.4Q15.27 15.56 15.43 15.64Q15.58 15.71 15.78 15.71Q16.05 15.71 16.3 15.63Q16.56 15.56 16.83 15.4V15.79Q16.12 16.51 15.53 16.75Q14.93 16.99 14.21 16.99Q13.55 16.99 13.16 16.73Q12.77 16.47 12.59 15.94Q12.42 15.41 12.39 14.61L12.48 14.67Q12.3 15.41 11.94 15.93Q11.58 16.44 11.07 16.71Q10.56 16.98 9.93 16.98Q8.65 16.98 7.91 16.33Q7.17 15.68 7.17 14.53Q7.17 13.94 7.37 13.48Q7.58 13.02 8.17 12.6Q8.75 12.18 9.89 11.72Q11.03 11.26 12.89 10.67Z"/></symbol>
+  <!-- The highlighter: a chisel-tip marker (its colour shows in a bar under it, see #bInk). -->
+  <symbol id="i-marker" viewBox="0 0 24 24"><g transform="rotate(45 12 9.6)"><rect x="8.3" y="1.2" width="7.4" height="9.6" rx="1.8"/><path d="M8.3 10.8l1.6 3h4.2l1.6-3"/><path d="M10.2 13.8v3.8l3.6-1.7v-2.1"/></g></symbol>
+  <!-- Undo: a hooked arrow turning back to the left. -->
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M8.6 5L4.6 9l4 4"/><path d="M4.9 9h9.3a4.9 4.9 0 0 1 0 9.8h-3.8"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5.4 12.6l4.1 4.1 9.1-9.6"/></symbol>
+  <symbol id="i-timer" viewBox="0 0 24 24"><circle cx="12" cy="13.4" r="6.8"/><path d="M12 13.4V9.8M10 3.8h4M17.6 7.2l1.2-1.2"/></symbol>
+  <symbol id="i-resize" viewBox="0 0 24 24"><path d="M14.6 4.6h4.8v4.8M19.4 4.6l-5.6 5.6M9.4 19.4H4.6v-4.8M4.6 19.4l5.6-5.6"/></symbol>
+  <symbol id="i-muted" viewBox="0 0 24 24"><path d="M4.4 9.6h2.9l4.1-3.6v12l-4.1-3.6H4.4z"/><path d="M15.4 9.6l4.8 4.8M20.2 9.6l-4.8 4.8"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24"><path d="M10.4 5.2c.7-1.2 2.5-1.2 3.2 0l6.5 11.4c.7 1.2-.2 2.7-1.6 2.7H5.5c-1.4 0-2.3-1.5-1.6-2.7z"/><path d="M12 9.8v4M12 16.6v.1"/></symbol>
+  <symbol id="i-record" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6.4" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><rect x="7" y="6.6" width="3.6" height="10.8" rx="1.3" fill="currentColor" stroke="none"/><rect x="13.4" y="6.6" width="3.6" height="10.8" rx="1.3" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6.9" y="6.9" width="10.2" height="10.2" rx="2.4" fill="currentColor" stroke="none"/></symbol>
+</svg>
+<!-- Glass lensing filters are generated here for each capsule's size (glass.js). -->
+<svg class="sprite" aria-hidden="true"><defs id="glassDefs"></defs></svg>
+
+<img id="frozen" alt="" draggable="false">
+<div id="dim"></div>
+<div id="sel" class="sel" hidden></div>
+
+<!-- The box: your snip on top, your text under it. -->
+<div id="card" hidden>
+  <div class="pic">
+    <div class="media"></div>
+    <!-- Your highlights, and the layer that takes the drag that draws them. -->
+    <div class="hls" aria-hidden="true"></div>
+    <div class="hlcatch" title="Drag across text to highlight it"></div>
+  </div>
+  <canvas class="cap" title="Edit caption"></canvas>
+</div>
+
+<div id="region" hidden></div>
+<!-- Pull the edges or corners of your area to change it (it can go under the bar; the bar stays in front). -->
+<div id="handles" hidden>
+  <i class="band" data-h="n"></i><i class="band" data-h="s"></i><i class="band" data-h="w"></i><i class="band" data-h="e"></i>
+  <i class="knob" data-h="nw"></i><i class="knob" data-h="n"></i><i class="knob" data-h="ne"></i><i class="knob" data-h="e"></i>
+  <i class="knob" data-h="se"></i><i class="knob" data-h="s"></i><i class="knob" data-h="sw"></i><i class="knob" data-h="w"></i>
+</div>
+<canvas id="liveCap" title="Edit caption" hidden></canvas>
+
+<!--
+  One bar, top centre, the same from start to finish: a single capsule of light glass, icons only,
+  with close on the right. Every button
+  keeps one job in one place; what can't be used yet is dimmed. Pressed or chosen = the same blue.
+  screenshot, recording · area, post/image/video | record, pause, stop, time | highlighter colour, undo
+  highlight | save, copy, send to the chat | close
+  (Copy with ⧉, by right-clicking the box, or Ctrl+C: never by itself. The Annotated.com logo posts
+  it to the chat straight away. The marker opens the highlighter's nine colours.)
+  (No full-screen button: drag a box, or pull its edges out to the screen's edges.)
+-->
+<div id="bar" class="bar glass" hidden>
+  <div class="seg" data-group="kind" role="group" aria-label="What to make">
+    <span class="lozenge" aria-hidden="true"></span>
+    <button type="button" data-kind="snip" id="bSnip" aria-label="Screenshot"><svg><use href="#i-camera"/></svg></button>
+    <button type="button" data-kind="record" id="bVideo" aria-label="Screen recording"><svg><use href="#i-video"/></svg></button>
+  </div>
+  <div class="seg" data-group="shape" role="group" aria-label="How to choose">
+    <span class="lozenge" aria-hidden="true"></span>
+    <button type="button" data-shape="rect" id="bArea" aria-label="Select an area"><svg><use href="#i-area"/></svg></button>
+    <button type="button" data-shape="window" id="bPick" aria-label="Select a post, image or video"><svg><use href="#i-element"/></svg></button>
+  </div>
+  <span class="sep"></span>
+  <button type="button" id="bRec" aria-label="Start recording"><svg class="ico"><use href="#i-record"/></svg><span class="count"></span></button>
+  <button type="button" id="bPause" aria-label="Pause recording" aria-pressed="false"><svg><use href="#i-pause"/></svg></button>
+  <button type="button" id="bStop" aria-label="Stop recording"><svg><use href="#i-stop"/></svg></button>
+  <div id="bTime" role="timer" aria-label="Recording time"><span class="live-dot"></span><span class="t">0:00</span></div>
+  <span class="sep"></span>
+  <button type="button" id="bInk" aria-label="Highlighter colour" aria-haspopup="menu" aria-expanded="false" aria-controls="inks"><svg class="ico"><use href="#i-marker"/></svg><i class="swatch" aria-hidden="true"></i></button>
+  <button type="button" id="bUndo" aria-label="Undo highlight"><svg><use href="#i-undo"/></svg></button>
+  <span class="sep"></span>
+  <button type="button" id="bSave" aria-label="Save">
+    <svg class="ico"><use href="#i-download"/></svg>
+    <svg class="ring" viewBox="0 0 40 40" aria-hidden="true"><circle class="track" cx="20" cy="20" r="14"/><circle class="val" cx="20" cy="20" r="14"/></svg>
+    <svg class="done"><use href="#i-check"/></svg>
+  </button>
+  <button type="button" id="bCopy" aria-label="Copy image"><svg><use href="#i-copy"/></svg></button>
+  <button type="button" id="bPost" aria-label="Send to the chat"><svg class="ico"><use href="#i-logo"/></svg><svg class="spin" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="13"/></svg></button>
+  <span class="sep"></span>
+  <button type="button" id="bClose" aria-label="Close"><svg><use href="#i-close"/></svg></button>
+</div>
+
+<div id="tip" role="tooltip" aria-hidden="true"><span class="tt"></span><span class="tk"></span></div>
+
+<!-- Right-click the box (your picture or video): save it, copy it or send it to the chat, like ⤓ ⧉ and
+     the logo in the bar. -->
+<div id="boxMenu" role="menu" aria-label="Your snip" tabindex="-1" hidden>
+  <button type="button" role="menuitem" id="mSave"><svg><use href="#i-download"/></svg><span class="lbl">Save image</span></button>
+  <button type="button" role="menuitem" id="mCopy"><svg><use href="#i-copy"/></svg><span class="lbl">Copy image</span></button>
+  <button type="button" role="menuitem" id="mPost"><svg><use href="#i-logo"/></svg><span class="lbl">Send to the chat</span></button>
+</div>
+
+<!-- The highlighter's colours (from the marker in the bar): nine small squares, 3 × 3, nothing else.
+     (Filled in by ui.js from the palette in exporter.js.) -->
+<div id="inks" role="menu" aria-label="Highlighter colour" hidden></div>
+
+<div id="composer" hidden>
+  <div id="editorBox">
+    <div id="hilite" aria-hidden="true"></div>
+    <textarea id="editor" rows="1" spellcheck="true" autocomplete="off" placeholder="Annotate anything…" aria-label="Your text"></textarea>
+    <div id="mirror" aria-hidden="true"></div>
+    <div id="caret"></div>
+  </div>
+  <div id="counter" role="img" aria-label="Characters left" hidden>
+    <svg viewBox="0 0 30 30" aria-hidden="true"><circle class="track" cx="15" cy="15" r="12"/><circle class="val" cx="15" cy="15" r="12"/></svg>
+    <span class="left"></span>
+  </div>
+</div>
+
+<div id="toast" class="glass" role="status" aria-live="polite"><svg class="ticon" aria-hidden="true"><use href=""/></svg><svg class="ticon2" aria-hidden="true"><use href=""/></svg><span class="ttext"></span><span class="tsr"></span></div>
+</body>
+</html>

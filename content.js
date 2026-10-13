@@ -1,0 +1,979 @@
+// Annotated.com: page-side helper. Injected on demand (toolbar click / shortcut) into the top frame.
+// It only hosts the overlay frame and answers questions about the page (element rects, video
+// positions, the best source link). All drawing, typing, recording and saving happen inside the
+// overlay frame (ui.html), which is an extension page, so page scripts can't see or intercept it.
+(() => {
+  // Already here and still connected to the extension? Then the existing copy handles everything.
+  // (After the extension is updated, an old copy stays behind but can't talk to it any more.)
+  const prev = window.__annotatedSnip;
+  if (prev && prev.alive()) return;
+  if (prev) {
+    try {
+      prev.dispose();
+    } catch {}
+  }
+
+  const EXT_ORIGIN = new URL(chrome.runtime.getURL('')).origin;
+  let ui = null; // { host, frame, port, token, hole, keep, only, scale }
+  window.__annotatedSnip = {
+    alive: () => {
+      try {
+        return !!(chrome.runtime && chrome.runtime.id);
+      } catch {
+        return false;
+      }
+    },
+    dispose: () => teardown(),
+  };
+
+  chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
+    if (!msg || typeof msg.type !== 'string') return false;
+    if (msg.type === 'snip:toggle') {
+      if (!ui) {
+        reply({ handled: false });
+        return false;
+      }
+      if (!ui.ready) {
+        // The overlay never started (or crashed): remove it and let a fresh one open.
+        teardown();
+        reply({ handled: false });
+        return false;
+      }
+      const ackId = Math.random();
+      ui.pendingAck = ackId;
+      ui.port.postMessage({ type: 'toggle', mode: msg.mode, ackId });
+      setTimeout(() => {
+        if (!ui || ui.pendingAck !== ackId) return;
+        // No answer: don't leave a dead overlay on the page (and the icon closes the chat with it).
+        const token = ui.token;
+        teardown();
+        chrome.runtime.sendMessage({ type: 'snip:closed', token, closeChat: msg.mode === 'bar' }).catch(() => {});
+      }, 1500);
+      reply({ handled: true });
+      return false;
+    }
+    if (msg.type === 'snip:status') {
+      reply({ open: !!(ui && ui.ready) });
+      return false;
+    }
+    if (msg.type === 'snip:open') {
+      if (ui) teardown();
+      open(msg.token, msg.mode);
+      reply({ ok: true });
+      return false;
+    }
+    return false;
+  });
+
+  function important(el, css) {
+    for (const [k, v] of Object.entries(css)) el.style.setProperty(k, v, 'important');
+  }
+
+  const HOST_CSS = {
+    all: 'initial',
+      position: 'fixed',
+      inset: '0',
+      left: '0',
+      top: '0',
+      width: '100vw',
+      height: '100vh',
+      'max-width': 'none',
+      'max-height': 'none',
+      margin: '0',
+      padding: '0',
+      border: '0',
+      background: 'transparent',
+      overflow: 'visible',
+      display: 'block',
+      'z-index': '2147483647',
+      'pointer-events': 'none',
+      'color-scheme': 'light',
+      opacity: '1',
+      visibility: 'visible',
+      transform: 'none',
+      filter: 'none',
+    'clip-path': 'none',
+    contain: 'strict',
+  };
+
+  function open(token, mode) {
+    const host = document.createElement('annotated-snip-overlay');
+    host.setAttribute('popover', 'manual');
+    important(host, HOST_CSS);
+    const root = host.attachShadow({ mode: 'closed' });
+    const frame = document.createElement('iframe');
+    frame.setAttribute('allow', 'clipboard-write; autoplay; camera; microphone');
+    frame.setAttribute('title', 'Annotated.com');
+    frame.src = chrome.runtime.getURL('ui.html') + '#' + encodeURIComponent(token) + '|' + encodeURIComponent(mode || 'snip');
+    important(frame, {
+      all: 'initial',
+      position: 'absolute',
+      left: '0',
+      top: '0',
+      width: '100%',
+      height: '100%',
+      border: '0',
+      margin: '0',
+      padding: '0',
+      background: 'transparent',
+      display: 'block',
+      'pointer-events': 'auto',
+      // Same colour scheme as the overlay page inside it, so Chrome keeps the frame see-through (it
+      // paints an opaque backdrop behind a frame whose colour scheme differs).
+      'color-scheme': 'dark',
+      visibility: 'visible',
+    });
+    root.append(frame);
+    document.documentElement.append(host);
+    scrollbarsOn();
+    try {
+      host.showPopover();
+    } catch {
+      // Very old pages/engines: fall back to a plain fixed element.
+    }
+
+    const channel = new MessageChannel();
+    // From the icon (or the chat opening), just the bar comes up on the page as it is: nothing of the
+    // overlay takes clicks until the bar is drawn, and then only the bar does. The keyboard stays with
+    // the page (and the chat) until you press 📷 or 🎥.
+    const fromIcon = mode === 'bar';
+    ui = { host, frame, port: channel.port1, token, hole: null, keep: [], only: fromIcon ? [] : null, scale: 1, ready: false, opened: Date.now(), pendingAck: null };
+    if (fromIcon) applyHole();
+    channel.port1.onmessage = (e) => onUiMessage(e.data);
+    frame.addEventListener(
+      'load',
+      () => {
+        frame.contentWindow.postMessage({ type: 'annotated-snip:hello', token }, EXT_ORIGIN, [channel.port2]);
+        if (fromIcon) return;
+        try {
+          frame.focus();
+        } catch {}
+      },
+      { once: true }
+    );
+
+    window.addEventListener('resize', onResize, true);
+    document.addEventListener('fullscreenchange', onFullscreen, true);
+    window.addEventListener('pagehide', onPageHide, true);
+    window.addEventListener('pointerup', onPagePointerUp, true);
+    window.addEventListener('blur', onPageBlur);
+    for (const t of ['keydown', 'keypress', 'keyup']) window.addEventListener(t, onPageKey, true);
+    window.addEventListener('keydown', onIdleEsc); // (bubbling: after the page's own handlers)
+    // The page can't hide or restyle the overlay: what it changes on the host is put back (not what
+    // this script changes itself: it stops watching while it does).
+    const KEY_CSS = ['position', 'display', 'opacity', 'pointer-events', 'z-index', 'transform', 'filter', 'clip-path', 'visibility'];
+    ui.guard = new MutationObserver(() => {
+      if (!ui || ui.host !== host) return;
+      const want = { ...HOST_CSS, visibility: ui.hidden ? 'hidden' : 'visible' }; // (as the overlay last asked)
+      const changed = KEY_CSS.some((k) => host.style.getPropertyValue(k) !== String(want[k]) || host.style.getPropertyPriority(k) !== 'important');
+      const popover = host.getAttribute('popover') !== 'manual';
+      if (changed || popover) {
+        ui.guard.disconnect();
+        try {
+          if (popover) host.setAttribute('popover', 'manual');
+          if (changed) important(host, want);
+        } finally {
+          ui.guard.observe(host, { attributes: true });
+        }
+      }
+      try {
+        if (!host.matches(':popover-open')) host.showPopover();
+      } catch {}
+    });
+    ui.guard.observe(host, { attributes: true });
+    host.addEventListener('toggle', (e) => {
+      if (ui && ui.host === host && e.newState === 'closed') {
+        try {
+          host.showPopover();
+        } catch {}
+      }
+    });
+    ui.watchdog = setInterval(() => {
+      if (!ui) return;
+      let alive = true;
+      try {
+        alive = !!(chrome.runtime && chrome.runtime.id);
+      } catch {
+        alive = false;
+      }
+      if (!alive) return teardown(); // the extension was updated or removed
+      if (!ui.ready && Date.now() - ui.opened > 9000) return closedHere(); // the overlay never started
+      if (!ui.host.isConnected) return closedHere(); // the page took it away
+    }, 1500);
+  }
+
+  // The overlay went without the overlay saying so (the page left or removed it): tell the worker, so
+  // the icon and the chat know.
+  function closedHere() {
+    if (!ui) return;
+    const token = ui.token;
+    teardown();
+    try {
+      chrome.runtime.sendMessage({ type: 'snip:closed', token, closeChat: false }).catch(() => {});
+    } catch {}
+  }
+  function onPageHide() {
+    closedHere();
+  }
+
+  function teardown() {
+    if (!ui) return;
+    const { host, port, watchdog, guard } = ui;
+    ui = null;
+    scrollbarsOff();
+    clearInterval(watchdog);
+    if (guard) guard.disconnect();
+    window.removeEventListener('pointerup', onPagePointerUp, true);
+    window.removeEventListener('blur', onPageBlur);
+    for (const t of ['keydown', 'keypress', 'keyup']) window.removeEventListener(t, onPageKey, true);
+    window.removeEventListener('keydown', onIdleEsc);
+    try {
+      port.close();
+    } catch {}
+    try {
+      host.hidePopover();
+    } catch {}
+    host.remove();
+    window.removeEventListener('resize', onResize, true);
+    document.removeEventListener('fullscreenchange', onFullscreen, true);
+    window.removeEventListener('pagehide', onPageHide, true);
+  }
+
+  /* ---------- the page's own scrollbar, while Annotated.com is open ---------- */
+  // Thin, and out of sight until you scroll (or point at it); it fades away a second after. Only the
+  // page's own scrollbar: anything that scrolls inside the page keeps its look. Put back on close.
+  let sb = null; // { style, timer, near, shown, thin }
+  function scrollbarsOn() {
+    if (sb) return;
+    const root = document.documentElement;
+    let thin = true;
+    try {
+      thin = getComputedStyle(root).scrollbarWidth !== 'none'; // a page that hides it keeps it hidden
+    } catch {}
+    sb = { style: document.createElement('style'), timer: 0, near: false, shown: true, thin };
+    sb.style.setAttribute('data-annotated', 'scrollbar');
+    paintScrollbar(false);
+    const gutter = () => window.innerWidth - root.clientWidth;
+    const before = gutter();
+    (document.head || root).append(sb.style);
+    // A page that hid its scrollbar its own way (so there was no gutter) keeps it hidden: restyling it
+    // would bring it back and make the page narrower than its picture.
+    if (before === 0 && gutter() > 0) sb.style.remove();
+    window.addEventListener('scroll', onPageScroll, { capture: true, passive: true });
+    window.addEventListener('pointermove', onPagePointer, { capture: true, passive: true });
+  }
+  function paintScrollbar(show) {
+    if (!sb || sb.shown === show) return;
+    sb.shown = show;
+    const color = show ? 'rgba(128, 128, 128, 0.6) transparent' : 'transparent transparent';
+    sb.style.textContent = `html{${sb.thin ? 'scrollbar-width:thin!important;' : ''}scrollbar-color:${color}!important}:where(html *){scrollbar-color:auto}`;
+  }
+  function scrollbarSeen() {
+    paintScrollbar(true);
+    clearTimeout(sb.timer);
+    sb.timer = setTimeout(() => sb && !sb.near && paintScrollbar(false), 1000);
+  }
+  function onPageScroll(e) {
+    if (!sb) return;
+    const t = e.target;
+    if (t === document || t === document.documentElement || t === document.body || t === document.scrollingElement) scrollbarSeen();
+  }
+  function onPagePointer(e) {
+    if (!sb) return;
+    const near = e.clientX >= document.documentElement.clientWidth - 2; // over the page's scrollbar
+    if (near === sb.near) return;
+    sb.near = near;
+    if (near) {
+      clearTimeout(sb.timer);
+      paintScrollbar(true);
+    } else scrollbarSeen();
+  }
+  function scrollbarsOff() {
+    if (!sb) return;
+    clearTimeout(sb.timer);
+    sb.style.remove();
+    window.removeEventListener('scroll', onPageScroll, true);
+    window.removeEventListener('pointermove', onPagePointer, true);
+    sb = null;
+  }
+
+  function onResize() {
+    if (!ui) return;
+    applyHole();
+    ui.port.postMessage({ type: 'resize', w: window.innerWidth, h: window.innerHeight });
+  }
+
+  /* ---------- keep the keyboard on the typing line while recording ---------- */
+
+  function isEditable(el) {
+    if (!el || el.nodeType !== 1) return false;
+    if (el.isContentEditable) return true;
+    const tag = el.tagName;
+    if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
+    if (tag === 'INPUT') return !/^(button|checkbox|radio|range|submit|reset|file|color|image|hidden)$/i.test(el.type || '');
+    return false;
+  }
+
+  function deepActive() {
+    let a = document.activeElement;
+    while (a && a.shadowRoot && a.shadowRoot.activeElement) a = a.shadowRoot.activeElement;
+    return a;
+  }
+
+  function refocusUi() {
+    if (!ui) return;
+    try {
+      ui.frame.focus();
+    } catch {}
+    ui.port.postMessage({ type: 'focusEditor' });
+  }
+
+  // Clicking play/pause inside the recording area focuses the page; hand the keyboard back to the
+  // typing line right after, unless the click was into one of the page's own text fields.
+  function onPagePointerUp(e) {
+    if (!ui || !ui.hole || !e.isTrusted) return;
+    const path = e.composedPath ? e.composedPath() : [e.target];
+    if (path.includes(ui.host)) return;
+    if (isEditable(path[0])) return;
+    setTimeout(() => {
+      if (ui && ui.hole && !isEditable(deepActive())) refocusUi();
+    }, 0);
+  }
+
+  // Safety net: if the page still has the keyboard, don't let typing trigger its shortcuts
+  // (YouTube's k / f / numbers...). Send the keys to the typing line instead.
+  function onPageKey(e) {
+    if (!ui || !ui.hole || !e.isTrusted) return; // (only your own key presses, never the page's made-up ones)
+    const path = e.composedPath ? e.composedPath() : [e.target];
+    if (path.includes(ui.host) || isEditable(path[0])) return;
+    const printable = e.key && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
+    if (!printable && !['Enter', 'Escape', 'Backspace'].includes(e.key)) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (e.type === 'keydown') {
+      refocusUi();
+      ui.port.postMessage({ type: 'key', key: e.key, shiftKey: e.shiftKey, repeat: e.repeat });
+    }
+  }
+
+  // With just the bar on the page, the page has the keyboard (its arrows and shortcuts work), and Esc
+  // still closes the bar and the chat, unless the page used it (closing its own pop-up, say).
+  function onIdleEsc(e) {
+    if (!ui || ui.hole || !ui.only || e.key !== 'Escape' || !e.isTrusted || e.defaultPrevented || e.repeat) return;
+    const path = e.composedPath ? e.composedPath() : [e.target];
+    if (path.includes(ui.host) || isEditable(path[0])) return;
+    ui.port.postMessage({ type: 'key', key: 'Escape' });
+  }
+
+  // While recording, a click into a video player embedded in the page (another site's frame) would
+  // take the keyboard there, and your typing would work its controls: the typing line gets it back.
+  function onPageBlur() {
+    setTimeout(() => {
+      if (!ui || !ui.hole) return;
+      const a = document.activeElement;
+      if (a && a !== ui.host && a.tagName === 'IFRAME') refocusUi();
+    }, 0);
+  }
+
+  function onFullscreen() {
+    // A page element going fullscreen enters the top layer above us; re-show to stay on top.
+    if (!ui) return;
+    try {
+      ui.host.hidePopover();
+      ui.host.showPopover();
+    } catch {}
+  }
+
+  async function onUiMessage(m) {
+    if (!ui || !m) return;
+    ui.ready = true;
+    if (m.type === 'ack') {
+      if (ui.pendingAck === m.ackId) ui.pendingAck = null;
+      return;
+    }
+    let result = null;
+    try {
+      switch (m.type) {
+        case 'info':
+          ui.scale = m.uiWidth ? ui.frame.getBoundingClientRect().width / m.uiWidth || 1 : 1;
+          result = pageInfo();
+          break;
+        case 'pick':
+          result = pick(m.x * ui.scale, m.y * ui.scale, m.depth == null ? null : m.depth);
+          break;
+        case 'hlStart':
+          hlDrag = m.drag;
+          result = { text: highlightFrom(m.x * ui.scale, m.y * ui.scale) };
+          break;
+        case 'hlTo':
+          result = m.drag === hlDrag ? highlightTo(m.x * ui.scale, m.y * ui.scale) : null;
+          break;
+        case 'hlEnd':
+          if (m.drag === hlDrag) hlFrom = null;
+          result = true;
+          break;
+        case 'videos':
+          result = listVideos();
+          break;
+        case 'source':
+          result = bestSource(m.rect, m);
+          break;
+        case 'hole':
+          ui.hole = m.rect || null;
+          ui.keep = Array.isArray(m.keep) ? m.keep : [];
+          ui.only = Array.isArray(m.only) ? m.only : null;
+          applyHole();
+          result = true;
+          break;
+        case 'visible':
+          // Hidden for a picture of the page: the frame too (it sets its own visibility, which would
+          // otherwise keep it, and the bar, in the picture).
+          ui.hidden = !m.visible;
+          ui.guard.disconnect(); // (this script's own change: not put back)
+          important(ui.host, { visibility: m.visible ? 'visible' : 'hidden' });
+          ui.guard.observe(ui.host, { attributes: true });
+          important(ui.frame, { visibility: m.visible ? 'visible' : 'hidden' });
+          result = true;
+          break;
+        case 'focus':
+          try {
+            ui.frame.focus();
+          } catch {}
+          result = true;
+          break;
+        case 'blur':
+          // Just the bar on the page again: the keyboard goes back to the page (arrows, Page Down...).
+          try {
+            if (document.activeElement === ui.host) ui.frame.blur(); // (only if the overlay has it)
+          } catch {}
+          result = true;
+          break;
+        case 'settle': {
+          // After the overlay's shape changed (the bar alone -> the whole screen): two of the page's
+          // frames, so Chrome sends the pointer by the new shape. (A press right away could otherwise
+          // still land on the page.)
+          const id = m.id;
+          let sent = false;
+          const reply = () => {
+            if (sent || !ui) return;
+            sent = true;
+            ui.port.postMessage({ id, result: true });
+          };
+          requestAnimationFrame(() => requestAnimationFrame(reply));
+          setTimeout(reply, 250);
+          return;
+        }
+        case 'close':
+          teardown();
+          // Said from here, not from the overlay: its frame is gone now, and a message it had just
+          // sent could go with it.
+          try {
+            chrome.runtime.sendMessage({ type: 'snip:closed', token: m.token, closeChat: !!m.closeChat }).catch(() => {});
+          } catch {}
+          return;
+      }
+    } catch (e) {
+      if (m.id != null && ui) ui.port.postMessage({ id: m.id, error: String((e && e.message) || e) });
+      return;
+    }
+    if (m.id != null && ui) ui.port.postMessage({ id: m.id, result });
+  }
+
+  function pageInfo() {
+    return {
+      url: location.href,
+      title: document.title,
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight,
+      dpr: window.devicePixelRatio || 1,
+      videos: listVideos(),
+    };
+  }
+
+  // Cut a hole in the overlay so the page under the recording area stays visible and clickable, except
+  // where the overlay's own controls sit over it (the bar, the typing line...): those stay in front.
+  // Non-zero winding: the frame clockwise, the hole anticlockwise, the controls clockwise again.
+  // With the bar on the page as it is ("only"), only the bar (and a label or bubble) shows and takes
+  // clicks: the rest of the page is yours, and its keys too.
+  function applyHole() {
+    if (!ui) return;
+    const f = ui.frame;
+    const k = ui.scale || 1;
+    if (ui.only) {
+      const d = ui.only.map((c) => `M${c.x * k} ${c.y * k}H${(c.x + c.w) * k}V${(c.y + c.h) * k}H${c.x * k}Z`).join(' ');
+      f.style.setProperty('clip-path', d ? `path(nonzero, "${d}")` : 'polygon(0 0, 0 0, 0 0)', 'important');
+      return;
+    }
+    if (!ui.hole) {
+      f.style.removeProperty('clip-path');
+      return;
+    }
+    const r = f.getBoundingClientRect();
+    const x = ui.hole.x * k;
+    const y = ui.hole.y * k;
+    const w = ui.hole.w * k;
+    const h = ui.hole.h * k;
+    const W = r.width;
+    const H = r.height;
+    let d = `M0 0H${W}V${H}H0Z M${x} ${y}V${y + h}H${x + w}V${y}Z`;
+    for (const c of ui.keep || []) {
+      const cx = c.x * k;
+      const cy = c.y * k;
+      d += ` M${cx} ${cy}H${cx + c.w * k}V${cy + c.h * k}H${cx}Z`;
+    }
+    f.style.setProperty('clip-path', `path(nonzero, "${d}")`, 'important');
+  }
+
+  /* ---------- geometry helpers ---------- */
+
+  function rectOf(el) {
+    const r = el.getBoundingClientRect();
+    const k = ui ? ui.scale : 1;
+    return { x: r.left / k, y: r.top / k, w: r.width / k, h: r.height / k };
+  }
+
+  function clipToViewport(r) {
+    const k = ui ? ui.scale : 1;
+    const W = window.innerWidth / k;
+    const H = window.innerHeight / k;
+    const x = Math.max(0, r.x);
+    const y = Math.max(0, r.y);
+    const x2 = Math.min(W, r.x + r.w);
+    const y2 = Math.min(H, r.y + r.h);
+    if (x2 <= x || y2 <= y) return null;
+    return { x, y, w: x2 - x, h: y2 - y };
+  }
+
+  function overlap(a, b) {
+    const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+    const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+    return w > 0 && h > 0 ? w * h : 0;
+  }
+
+  function isShown(el) {
+    const cs = getComputedStyle(el);
+    return cs.display !== 'none' && cs.visibility !== 'hidden' && parseFloat(cs.opacity || '1') > 0.05;
+  }
+
+  function deepAll(selector, root = document, out = [], depth = 0) {
+    root.querySelectorAll(selector).forEach((e) => out.push(e));
+    if (depth > 4) return out;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+    let n = walker.currentNode;
+    while (n) {
+      if (n.shadowRoot) deepAll(selector, n.shadowRoot, out, depth + 1);
+      n = walker.nextNode();
+    }
+    return out;
+  }
+
+  const VIDEO_IFRAME =
+    /(youtube(-nocookie)?\.com\/embed|player\.vimeo\.com|player\.twitch\.tv|dailymotion\.com\/(embed|player)|streamable\.com\/[eo]\/|facebook\.com\/plugins\/video|tiktok\.com\/embed|loom\.com\/embed|fast\.wistia|players\.brightcove|jwplayer|rumble\.com\/embed|bilibili\.com\/.*player|x\.com\/i\/videos|twitter\.com\/i\/videos)/i;
+
+  function listVideos() {
+    const out = [];
+    for (const v of deepAll('video')) {
+      const r = clipToViewport(rectOf(v));
+      if (!r || r.w < 80 || r.h < 45 || !isShown(v)) continue;
+      out.push({ ...r, kind: 'video', playing: !v.paused && !v.ended, t: v.currentTime || 0 });
+    }
+    for (const f of document.querySelectorAll('iframe')) {
+      if (!VIDEO_IFRAME.test(f.src || '')) continue;
+      const r = clipToViewport(rectOf(f));
+      if (!r || r.w < 120 || r.h < 68 || !isShown(f)) continue;
+      out.push({ ...r, kind: 'embed' });
+    }
+    return out;
+  }
+
+  /* ---------- window mode: pick a meaningful element under the pointer ---------- */
+
+  const SEMANTIC = new Set([
+    'VIDEO', 'IMG', 'PICTURE', 'CANVAS', 'IFRAME', 'svg', 'SVG', 'FIGURE', 'ARTICLE', 'PRE', 'TABLE', 'BLOCKQUOTE',
+    'LI', 'SECTION', 'ASIDE', 'HEADER', 'FOOTER', 'NAV', 'FORM', 'MAIN', 'P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
+    'UL', 'OL', 'DL', 'DIALOG', 'CODE',
+  ]);
+  const SEMANTIC_SEL =
+    '[data-testid="tweet"],[data-testid="tweetPhoto"],[data-testid="videoPlayer"],[role="article"],[role="dialog"],[role="img"],[role="figure"],#movie_player,ytd-player,ytd-rich-item-renderer,ytd-video-renderer,ytd-comment-thread-renderer,shreddit-post,shreddit-comment';
+
+  function isCandidate(el, area) {
+    const r = el.getBoundingClientRect();
+    if (r.width < 32 || r.height < 18) return false;
+    if (r.width * r.height > area * 0.97) return false;
+    if (SEMANTIC.has(el.tagName) || el.matches(SEMANTIC_SEL)) return true;
+    const cs = getComputedStyle(el);
+    if (cs.boxShadow && cs.boxShadow !== 'none') return true;
+    if (parseFloat(cs.borderTopWidth) > 0 && cs.borderTopStyle !== 'none' && parseFloat(cs.borderLeftWidth) > 0) return true;
+    if (parseFloat(cs.borderTopLeftRadius) >= 6 && cs.backgroundColor && !/rgba\(0, 0, 0, 0\)|transparent/.test(cs.backgroundColor)) return true;
+    if (cs.backgroundImage && cs.backgroundImage !== 'none' && r.width * r.height > 4000) return true;
+    return false;
+  }
+
+  function parentOf(n) {
+    if (n.parentElement) return n.parentElement;
+    const root = n.getRootNode && n.getRootNode();
+    return root && root.host ? root.host : null;
+  }
+
+  function hitElement(x, y) {
+    let list = document.elementsFromPoint(x, y).filter((e) => !ui || (e !== ui.host && !ui.host.contains(e)));
+    let el = list[0] || null;
+    // Step into open shadow roots (custom players, web components).
+    for (let i = 0; el && el.shadowRoot && i < 5; i++) {
+      const inner = el.shadowRoot.elementsFromPoint(x, y).find((e) => e !== el);
+      if (!inner || inner === el) break;
+      el = inner;
+    }
+    return el;
+  }
+
+  // Things people usually mean when they click: a whole post, image, video, code block, table...
+  const STRONG =
+    'article,figure,video,img,picture,canvas,iframe,blockquote,pre,table,dialog,[data-testid="tweet"],[role="article"],[role="dialog"],#movie_player,ytd-player,ytd-rich-item-renderer,ytd-video-renderer,ytd-comment-thread-renderer,shreddit-post,shreddit-comment';
+
+  // depth: null = best guess; a number = that many steps out from the innermost candidate.
+  function pick(x, y, depth) {
+    const el = hitElement(x, y);
+    if (!el) return null;
+    const area = window.innerWidth * window.innerHeight;
+    const chain = [];
+    for (let n = el; n && n !== document.documentElement && n !== document.body; n = parentOf(n)) {
+      if (isCandidate(n, area)) {
+        const r = clipToViewport(rectOf(n));
+        if (!r) continue;
+        const prev = chain[chain.length - 1];
+        // Skip wrappers that are (almost) the same box as the previous candidate.
+        if (prev && Math.abs(prev.x - r.x) < 3 && Math.abs(prev.y - r.y) < 3 && Math.abs(prev.w - r.w) < 6 && Math.abs(prev.h - r.h) < 6) {
+          if (n.matches(STRONG)) prev.strong = true;
+          continue;
+        }
+        chain.push({ ...r, tag: n.tagName.toLowerCase(), strong: n.matches(STRONG) });
+      }
+      if (chain.length > 12) break;
+    }
+    if (!chain.length) {
+      const r = clipToViewport(rectOf(el));
+      return r ? { ...r, depth: 0, max: 0 } : null;
+    }
+    let d;
+    if (depth == null) {
+      const k = ui ? ui.scale : 1;
+      const big = (c) => c.w * c.h > (area / (k * k)) * 0.6;
+      d = chain.findIndex((c) => c.strong && !big(c));
+      if (d < 0) d = 0;
+    } else {
+      d = Math.max(0, Math.min(depth, chain.length - 1));
+    }
+    const { strong, ...hit } = chain[d];
+    return { ...hit, depth: d, max: chain.length - 1 };
+  }
+
+  /* ---------- highlighting text in your snip, like selecting it ---------- */
+  // Only text: where you press has to be on a letter of the page's text. As you drag: the lines of text
+  // from there to the pointer, one band per line (just the letters' boxes, never the space around
+  // them), in the overlay's units. The overlay draws them in the highlighter's colour over your picture.
+  let hlFrom = null; // { node, offset }
+  let hlDrag = null; // which drag it's for
+
+  // The text position under a point of the page (the overlay lets the hit test through for a moment).
+  function caretAt(x, y) {
+    const f = ui && ui.frame;
+    if (f) f.style.setProperty('pointer-events', 'none', 'important');
+    try {
+      if (document.caretPositionFromPoint) {
+        const p = document.caretPositionFromPoint(x, y);
+        return p && p.offsetNode ? { node: p.offsetNode, offset: p.offset } : null;
+      }
+      if (document.caretRangeFromPoint) {
+        const r = document.caretRangeFromPoint(x, y);
+        return r ? { node: r.startContainer, offset: r.startOffset } : null;
+      }
+      return null;
+    } catch {
+      return null;
+    } finally {
+      if (f) f.style.setProperty('pointer-events', 'auto', 'important');
+    }
+  }
+
+  // Is the point on the text itself (a letter next to the caret), not just beside a paragraph?
+  function onText(pos, x, y) {
+    if (!pos || !pos.node || pos.node.nodeType !== Node.TEXT_NODE || !pos.node.data.trim()) return false;
+    const n = pos.node;
+    const r = document.createRange();
+    for (const i of [pos.offset, pos.offset - 1]) {
+      if (i < 0 || i >= n.data.length) continue;
+      r.setStart(n, i);
+      r.setEnd(n, i + 1);
+      for (const b of r.getClientRects()) if (x >= b.left - 4 && x <= b.right + 4 && y >= b.top - 2 && y <= b.bottom + 2) return true;
+    }
+    return false;
+  }
+
+  // The letter under a point, found by measuring the letters themselves: for text that something lies
+  // over (a see-through layer, a link's cover, a custom element), where the browser's own caret test
+  // stops at that layer. Looks only at the elements under the point (and their open shadow roots).
+  function letterAt(x, y) {
+    const f = ui && ui.frame;
+    if (f) f.style.setProperty('pointer-events', 'none', 'important');
+    let stack;
+    try {
+      stack = document.elementsFromPoint(x, y).filter((e) => !ui || (e !== ui.host && !ui.host.contains(e)));
+    } finally {
+      if (f) f.style.setProperty('pointer-events', 'auto', 'important');
+    }
+    const seen = new Set();
+    const r = document.createRange();
+    let budget = 3000; // text nodes, at most
+    for (const top of stack.slice(0, 16)) {
+      for (const n of textUnder(top, x, y, seen, 0)) {
+        if (--budget < 0) return null;
+        if (!n.data.trim()) continue;
+        r.selectNodeContents(n);
+        if (![...r.getClientRects()].some((b) => x >= b.left - 1 && x <= b.right + 1 && y >= b.top - 1 && y <= b.bottom + 1)) continue;
+        const i = letterIn(n, x, y);
+        if (i >= 0) return { node: n, offset: i };
+      }
+    }
+    return null;
+  }
+
+  // The text nodes in an element whose boxes take in the point (open shadow roots too).
+  function* textUnder(root, x, y, seen, depth) {
+    if (depth > 60) return;
+    if (root.shadowRoot && root !== (ui && ui.host)) yield* textUnder(root.shadowRoot, x, y, seen, depth + 1);
+    for (let c = root.firstChild; c; c = c.nextSibling) {
+      if (c.nodeType === Node.TEXT_NODE) {
+        if (!seen.has(c)) {
+          seen.add(c);
+          yield c;
+        }
+        continue;
+      }
+      if (c.nodeType !== Node.ELEMENT_NODE || (ui && c === ui.host) || /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(c.tagName)) continue;
+      const b = c.getBoundingClientRect();
+      if ((b.width || b.height) && !(x >= b.left - 2 && x <= b.right + 2 && y >= b.top - 2 && y <= b.bottom + 2)) continue;
+      yield* textUnder(c, x, y, seen, depth + 1);
+    }
+  }
+
+  // Which letter of a text node is under the point (its index), or -1.
+  function letterIn(n, x, y) {
+    const r = document.createRange();
+    const len = Math.min(n.data.length, 20000);
+    for (let i = 0; i < len; i++) {
+      if (!/\S/.test(n.data[i])) continue;
+      r.setStart(n, i);
+      r.setEnd(n, i + 1);
+      for (const b of r.getClientRects()) if (x >= b.left - 1 && x <= b.right + 1 && y >= b.top - 1 && y <= b.bottom + 1) return i;
+    }
+    return -1;
+  }
+
+  // Where you press: on a letter (the browser's caret test, checked against the letters' boxes; or,
+  // with something over the text, the letters measured directly). Anywhere else: nothing.
+  function highlightFrom(x, y) {
+    const pos = caretAt(x, y);
+    hlFrom = onText(pos, x, y) ? pos : letterAt(x, y);
+    return !!hlFrom;
+  }
+
+  // Where the drag has got to: the nearest place in the text (between lines or past a line's end too);
+  // with something over the text there, the letter under it.
+  function caretNear(x, y) {
+    const pos = caretAt(x, y);
+    if (pos && pos.node && pos.node.nodeType === Node.TEXT_NODE) return pos;
+    return letterAt(x, y) || pos;
+  }
+
+  function highlightTo(x, y) {
+    if (!hlFrom) return [];
+    const to = caretNear(x, y);
+    if (!to) return null;
+    const range = document.createRange();
+    try {
+      range.setStart(hlFrom.node, hlFrom.offset);
+      range.setEnd(hlFrom.node, hlFrom.offset);
+      if (range.comparePoint(to.node, to.offset) < 0) range.setStart(to.node, to.offset);
+      else range.setEnd(to.node, to.offset);
+    } catch {
+      return null;
+    }
+    // The text in it (not the boxes of the elements it spans), one band per line.
+    const k = ui ? ui.scale : 1;
+    const parts = [];
+    const root = range.commonAncestorContainer.nodeType === Node.TEXT_NODE ? range.commonAncestorContainer.parentNode : range.commonAncestorContainer;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const piece = document.createRange();
+    let n = range.startContainer.nodeType === Node.TEXT_NODE ? range.startContainer : walker.nextNode();
+    if (n && n.nodeType === Node.TEXT_NODE) walker.currentNode = n;
+    for (let count = 0; n && count < 3000; n = walker.nextNode(), count++) {
+      if (!range.intersectsNode(n)) {
+        if (range.comparePoint(n, 0) > 0) break; // past the end
+        continue;
+      }
+      if (!n.data.trim()) continue;
+      piece.selectNodeContents(n);
+      if (n === range.startContainer) piece.setStart(n, range.startOffset);
+      if (n === range.endContainer) piece.setEnd(n, range.endOffset);
+      for (const q of piece.getClientRects()) if (q.width > 0.5 && q.height > 0.5) parts.push({ x: q.left / k, y: q.top / k, w: q.width / k, h: q.height / k });
+    }
+    parts.sort((a, b) => a.y - b.y || a.x - b.x);
+    const lines = [];
+    for (const q of parts) {
+      const line = lines.find((l) => Math.min(l.y + l.h, q.y + q.h) - Math.max(l.y, q.y) > 0.5 * Math.min(l.h, q.h));
+      if (!line) {
+        lines.push({ ...q });
+        continue;
+      }
+      const x1 = Math.min(line.x, q.x);
+      const y1 = Math.min(line.y, q.y);
+      line.w = Math.max(line.x + line.w, q.x + q.w) - x1;
+      line.h = Math.max(line.y + line.h, q.y + q.h) - y1;
+      line.x = x1;
+      line.y = y1;
+    }
+    return lines.slice(0, 300);
+  }
+
+  /* ---------- the source link ---------- */
+
+  const TRACKING = /^(utm_[a-z_]+|fbclid|gclid|dclid|gbraid|wbraid|msclkid|yclid|ttclid|twclid|igshid|igsh|mc_cid|mc_eid|_ga|_gl|mkt_tok|spm|vero_id|oly_anon_id|oly_enc_id|rb_clickid|trk|trkCampaign|sc_campaign|hsCtaTracking|__hssc|__hstc|__hsfp|hsa_[a-z]+|ref_src|ref_url|cmpid|ncid|sr_share|share_id|si)$/i;
+
+  // Secrets in an address (it ends up in a public picture and the chat): any parameter whose name has
+  // one of these words in it (reset_password_token, oauth_token, key, code + state, rlkey, jwt...), and
+  // any value that looks like a key or a login token, whatever its name.
+  const SECRET_WORDS = new Set(['token', 'tokens', 'secret', 'password', 'passwd', 'pwd', 'pass', 'passcode', 'auth', 'authorization', 'oauth', 'session', 'sessionid', 'sid', 'sig', 'signature', 'key', 'apikey', 'rlkey', 'code', 'ticket', 'jwt', 'otp', 'nonce', 'verifier', 'state', 'credential', 'credentials', 'private', 'access', 'refresh', 'saml', 'assertion', 'magic', 'invite', 'confirmation', 'reset']);
+  function secretName(name) {
+    const words = String(name)
+      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+      .toLowerCase()
+      .split(/[^a-z0-9]+/);
+    return words.some((w) => SECRET_WORDS.has(w)) || /^x-(amz|goog)-/i.test(name);
+  }
+  function secretValue(v) {
+    if (/^eyJ[\w-]{6,}\.[\w-]+\.[\w-]*$/.test(v)) return true; // a JWT
+    return v.length >= 40 && /^[\w\-.~+/=]+$/.test(v) && /\d/.test(v) && /[a-z]/i.test(v); // a long key
+  }
+
+  function cleanUrl(href) {
+    let u;
+    try {
+      u = new URL(href);
+    } catch {
+      return '';
+    }
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return ''; // (a file on your computer has no public source)
+    // The link ends up in a public image: drop logins, tracking tags and secrets. The parameters kept
+    // stay exactly as they were written.
+    u.username = '';
+    u.password = '';
+    const kept = u.search
+      .slice(1)
+      .split('&')
+      .filter((pair) => {
+        if (!pair) return false;
+        const eq = pair.indexOf('=');
+        const dec = (x) => {
+          try {
+            return decodeURIComponent(x.replace(/\+/g, ' '));
+          } catch {
+            return x;
+          }
+        };
+        const name = dec(eq < 0 ? pair : pair.slice(0, eq));
+        const value = eq < 0 ? '' : dec(pair.slice(eq + 1));
+        return !(TRACKING.test(name) || secretName(name) || secretValue(value));
+      });
+    u.search = kept.length ? '?' + kept.join('&') : '';
+    // After #: a highlighted quote (#:~:text=…) or a real anchor on this page stays; anything else goes
+    // (some sites keep keys there: #access_token=…, file-sharing links' decryption keys).
+    const h = u.hash;
+    if (h && !h.startsWith('#:~:')) {
+      let anchor = false;
+      try {
+        const id = decodeURIComponent(h.slice(1));
+        anchor = id.length <= 80 && !!document.getElementById(id) && location.href.split('#')[0] === href.split('#')[0];
+      } catch {}
+      if (!anchor) u.hash = '';
+    }
+    let out = u.toString();
+    if (out.endsWith('?')) out = out.slice(0, -1);
+    if (out.endsWith('#')) out = out.slice(0, -1);
+    return out;
+  }
+
+  function mainVideoIn(rect) {
+    let best = null;
+    let bestA = 0;
+    for (const v of deepAll('video')) {
+      const a = overlap(rectOf(v), rect);
+      if (a > bestA) {
+        bestA = a;
+        best = v;
+      }
+    }
+    return best;
+  }
+
+  function bestSource(rect, opts = {}) {
+    const href = location.href;
+    let u;
+    try {
+      u = new URL(href);
+    } catch {
+      return { url: href };
+    }
+    const host = u.hostname.replace(/^(www|mobile|m)\./, '');
+    rect = rect || { x: 0, y: 0, w: window.innerWidth, h: window.innerHeight };
+
+    if (host === 'x.com' || host === 'twitter.com') {
+      let best = null;
+      let bestA = 0;
+      for (const p of document.querySelectorAll('article[data-testid="tweet"], article[role="article"]')) {
+        const a = overlap(rectOf(p), rect);
+        if (a > bestA) {
+          bestA = a;
+          best = p;
+        }
+      }
+      const fromLink = (a) => {
+        try {
+          const m = new URL(a.href, href).pathname.match(/^\/([^/]+)\/status\/(\d+)/);
+          return m ? `https://x.com/${m[1]}/status/${m[2]}` : null;
+        } catch {
+          return null;
+        }
+      };
+      if (best) {
+        const links = [...best.querySelectorAll('a[href*="/status/"]')];
+        const timeLink = links.find((a) => a.querySelector('time'));
+        const url = (timeLink && fromLink(timeLink)) || (links[0] && fromLink(links[0]));
+        if (url) return { url };
+      }
+      const m = u.pathname.match(/^\/([^/]+)\/status\/(\d+)/);
+      if (m) return { url: `https://x.com/${m[1]}/status/${m[2]}` };
+      return { url: cleanUrl(href) };
+    }
+
+    if (host === 'youtube.com' || host === 'music.youtube.com' || host === 'youtu.be') {
+      const id = host === 'youtu.be' ? u.pathname.slice(1).split('/')[0] : u.searchParams.get('v');
+      const shorts = u.pathname.match(/^\/shorts\/([\w-]{6,})/);
+      if (id || shorts) {
+        let url = id ? `https://www.youtube.com/watch?v=${id}` : `https://www.youtube.com/shorts/${shorts[1]}`;
+        if (id) {
+          let t = opts.time;
+          if (t == null) {
+            const v = mainVideoIn(rect);
+            if (v && v.currentTime > 1) t = v.currentTime;
+          }
+          if (t != null && t >= 1) url += `&t=${Math.floor(t)}s`;
+        }
+        return { url };
+      }
+      return { url: cleanUrl(href) };
+    }
+
+    return { url: cleanUrl(href) };
+  }
+})();

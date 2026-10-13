@@ -1,0 +1,776 @@
+/* Everything is set in Newsreader, an editorial serif by Production Type (SIL Open Font License,
+   fonts/OFL.txt), bundled so it looks the same on every computer. Its optical sizes follow the text
+   size: sturdier for small labels, finer for big captions. */
+@font-face {
+  font-family: 'Newsreader Snip';
+  font-style: normal;
+  font-display: block;
+  font-weight: 200 800;
+  src: url(fonts/newsreader-vietnamese-opsz-normal.woff2) format('woff2-variations');
+  unicode-range: U+0102-0103,U+0110-0111,U+0128-0129,U+0168-0169,U+01A0-01A1,U+01AF-01B0,U+0300-0301,U+0303-0304,U+0308-0309,U+0323,U+0329,U+1EA0-1EF9,U+20AB;
+}
+@font-face {
+  font-family: 'Newsreader Snip';
+  font-style: normal;
+  font-display: block;
+  font-weight: 200 800;
+  src: url(fonts/newsreader-latin-ext-opsz-normal.woff2) format('woff2-variations');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Newsreader Snip';
+  font-style: normal;
+  font-display: block;
+  font-weight: 200 800;
+  src: url(fonts/newsreader-latin-opsz-normal.woff2) format('woff2-variations');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+
+:root {
+  color-scheme: dark;
+  --dim: rgba(0, 0, 0, 0.66);
+  /* Black and white only (and glass): white glass, black symbols; on the dark overlay, white. Every
+     pressed or chosen button is the same bubble of black glass with a white symbol. */
+  --ink: rgba(0, 0, 0, 0.86);
+  --press: 24, 24, 27;
+  --ui: 'Newsreader Snip', Georgia, 'Times New Roman', serif;
+  --edfs: 44px;
+  --edmax: 40vh;
+  /* The bar is sized in screen pixels (48 px tall at 100% display scaling): ui.js sets --k to undo
+     the page's zoom (and to fit a very narrow window). */
+  --k: 1;
+  --bar-top: 12px;
+  --btn: 40px;
+  --pad: 4px;
+  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --settle: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  font-family: var(--ui);
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+body { cursor: crosshair; }
+body.busy, body.busy * { cursor: progress !important; }
+body.st-compose, body.st-review, body.st-exporting, body.st-armed, body.st-countdown, body.st-recording, body.st-stopping { cursor: default; }
+body.shape-window.st-select { cursor: default; }
+[hidden] { display: none !important; }
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+/* The frozen page and the darkness over it. */
+#frozen {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  display: none;
+}
+#frozen.on { display: block; }
+#dim {
+  position: fixed;
+  inset: 0;
+  background: var(--dim);
+  opacity: 0;
+  transition: opacity 0.16s ease-out;
+  pointer-events: none;
+}
+#dim.on { opacity: 1; }
+#dim.instant { transition: none; }
+
+/* Selection rectangle while dragging / hovering. Its huge shadow darkens everything else. */
+.sel {
+  position: fixed;
+  left: 0;
+  top: 0;
+  outline: 2px dashed rgba(255, 255, 255, 0.95);
+  outline-offset: 0;
+  box-shadow: 0 0 0 200vmax var(--dim);
+  pointer-events: none;
+}
+.sel.window { outline: 2px solid rgba(255, 255, 255, 0.95); box-shadow: 0 0 0 200vmax var(--dim), 0 0 24px rgba(255, 255, 255, 0.35); }
+
+/* The box: your snip on top, your text under it. */
+#card {
+  position: fixed;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  background: #fff;
+  outline: 2px dashed rgba(255, 255, 255, 0.95);
+  outline-offset: 2px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+  transition: transform 0.34s var(--settle);
+}
+#card.instant { transition: none; }
+#card .pic { position: relative; }
+#card .media { position: relative; overflow: hidden; background: #000; }
+/* Highlights: in the highlighter's colour (exporter.js INKS), inked into the picture so text stays
+   crisp; on a dark picture, laid over it see-through. The layer above takes the drag (on a video, not
+   its controls at the bottom). */
+#card .hls { position: absolute; left: 0; top: 0; overflow: hidden; pointer-events: none; }
+/* Each highlight's colour is set on it (the highlighter's colour when it was drawn). */
+/* Words only a screen reader hears (an icon-only notice says what it means). */
+#toast .tsr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* The highlights: one layer of ink, multiplied in as a whole, and one of glow (on dark ground),
+   see-through as a whole, so the same words highlighted twice are no darker. */
+#card .hls .ink, #card .hls .glow { position: absolute; inset: 0; }
+#card .hls .ink { mix-blend-mode: multiply; }
+#card .hls i { position: absolute; border-radius: 2px; }
+#card .hlcatch { position: absolute; left: 0; top: 0; cursor: text; touch-action: none; }
+#card .media > canvas, #card .media > video { display: block; width: 100%; height: 100%; }
+#card .media > video { object-fit: fill; }
+#card .cap { display: block; cursor: text; transition: opacity 0.2s; }
+#card .cap.editing, #liveCap.editing { filter: brightness(0.38); }
+#card .cap.empty { display: none; }
+
+/* Recording area (a hole cut in the overlay, so the page stays live and clickable). */
+#region {
+  position: fixed;
+  left: 0;
+  top: 0;
+  outline: 2px dashed rgba(255, 255, 255, 0.95);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 200vmax var(--dim);
+  pointer-events: none;
+  transition: outline-color 0.2s;
+}
+#region.live { outline: 3px solid #fff; outline-offset: 2px; }
+/* Paused: the frame goes dashed (nothing is being recorded); it's solid again when you go on. */
+#region.live.paused { outline-style: dashed; }
+
+/* Handles on your area: pull an edge or a corner to change it. Under the bar (it stays in front). */
+#handles {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  z-index: 8;
+  pointer-events: none;
+  transition: transform 0.34s var(--settle), width 0.34s var(--settle), height 0.34s var(--settle);
+}
+#handles.instant { transition: none; }
+#handles i { position: absolute; display: block; pointer-events: auto; }
+#handles .band[data-h='n'], #handles .band[data-h='s'] { left: 6px; right: 6px; height: 12px; cursor: ns-resize; }
+#handles .band[data-h='w'], #handles .band[data-h='e'] { top: 6px; bottom: 6px; width: 12px; cursor: ew-resize; }
+#handles .band[data-h='n'] { top: -6px; }
+#handles .band[data-h='s'] { bottom: -6px; }
+#handles .band[data-h='w'] { left: -6px; }
+#handles .band[data-h='e'] { right: -6px; }
+#handles .knob {
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 1px 4px rgba(0, 0, 0, 0.5);
+  transition: transform 0.25s var(--spring);
+}
+#handles .knob::after { content: ''; position: absolute; inset: -7px; border-radius: 50%; }
+#handles .knob:hover, #handles .knob.on { transform: scale(1.4); }
+#handles .knob[data-h='nw'] { left: 0; top: 0; cursor: nwse-resize; }
+#handles .knob[data-h='n'] { left: 50%; top: 0; cursor: ns-resize; }
+#handles .knob[data-h='ne'] { left: 100%; top: 0; cursor: nesw-resize; }
+#handles .knob[data-h='e'] { left: 100%; top: 50%; cursor: ew-resize; }
+#handles .knob[data-h='se'] { left: 100%; top: 100%; cursor: nwse-resize; }
+#handles .knob[data-h='s'] { left: 50%; top: 100%; cursor: ns-resize; }
+#handles .knob[data-h='sw'] { left: 0; top: 100%; cursor: nesw-resize; }
+#handles .knob[data-h='w'] { left: 0; top: 50%; cursor: ew-resize; }
+body.adjusting, body.adjusting * { cursor: var(--adjust-cursor, crosshair) !important; }
+#liveCap { position: fixed; left: 0; top: 0; cursor: text; }
+
+/* ------------------------------------------------------------------ */
+/* Glass, light                                                         */
+/* ------------------------------------------------------------------ */
+/* White glass: it frosts and brightens what's behind it, so dark symbols read over anything, and bends
+   it at the rim like a lens (an SVG filter made for each capsule, glass.js; until it's ready a frosted
+   blur stands in). On top: a bright rim with specular highlights, light along the curved top, and a
+   soft shadow that lifts it off the page. */
+.glass {
+  position: relative;
+  border-radius: 999px;
+  color: var(--ink);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0) 55%),
+    rgba(255, 255, 255, 0.46);
+  -webkit-backdrop-filter: blur(14px) saturate(1.8) brightness(1.2);
+  backdrop-filter: blur(14px) saturate(1.8) brightness(1.2);
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.16),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.55),
+    inset 1.5px 1.5px 1px -1px #fff,
+    inset -1.5px -1.5px 1px -1px rgba(255, 255, 255, 0.8),
+    0 10px 30px rgba(0, 0, 0, 0.32),
+    0 2px 6px rgba(0, 0, 0, 0.16);
+  transition: background-color 0.25s, box-shadow 0.25s;
+  cursor: default;
+}
+
+/* Clear glass on (glass.js adds "lg" once its filter is in place): no white wash, the filter lifts and
+   lights it; just a faint sheen across the top, a hairline edge and a soft shadow. */
+.glass.lg {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0) 45%);
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.14),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.5),
+    0 12px 32px rgba(0, 0, 0, 0.22),
+    0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+/* Capsules appear by condensing (the lensing ramps up in glass.js); never a plain fade. */
+.glass.materialize { animation: glass-materialize 0.42s var(--spring) both; }
+@keyframes glass-materialize {
+  from { transform: scale(0.82); opacity: 0; filter: blur(5px) brightness(1.3); }
+  60% { opacity: 1; }
+  to { transform: none; opacity: 1; filter: none; }
+}
+
+/* ---------- The bar: one capsule, top centre, the same all the way through ---------- */
+.bar {
+  position: fixed;
+  top: calc(var(--bar-top) * var(--k));
+  left: 50%;
+  translate: -50% 0;
+  scale: var(--k);
+  transform-origin: 50% 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: var(--pad);
+  border-radius: 12px;
+  z-index: 10;
+}
+/* Drag it anywhere (press and hold, then move); it stays where you put it, at the same size. */
+.bar.glass { cursor: grab; }
+.bar.moved { translate: none; transform-origin: 0 0; }
+body.bar-dragging, body.bar-dragging * { cursor: grabbing !important; }
+.bar.dragging button { pointer-events: none; }
+.bar button {
+  appearance: none;
+  position: relative;
+  z-index: 2;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  width: var(--btn);
+  height: var(--btn);
+  flex: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--sym, inherit);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: transform 0.42s var(--spring), background-color 0.18s, color 0.18s, opacity 0.25s, box-shadow 0.25s;
+}
+.bar button > * { grid-area: 1 / 1; }
+/* Hover: the button springs up and grows a little. */
+.bar button:hover { z-index: 3; transform: translateY(-2px) scale(1.1); background: rgba(0, 0, 0, 0.065); }
+/* Pressed, chosen or on: the same bubble of black glass for every button, with a white symbol. */
+.bar button:active,
+.bar button.flash,
+.bar button.on {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0) 60%), rgba(var(--press), 0.9);
+  color: #fff;
+  box-shadow:
+    inset 1px 1px 0.5px -0.5px rgba(255, 255, 255, 0.5),
+    inset -1px -1px 0.5px -0.5px rgba(255, 255, 255, 0.18),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.12),
+    0 3px 10px rgba(0, 0, 0, 0.3);
+}
+.bar button:active { transform: translateY(0) scale(0.95); transition-duration: 0.08s; }
+.bar button:focus-visible { outline: 2px solid #000; outline-offset: 2px; }
+/* Not usable yet: dimmed, in its place. */
+.bar button[disabled] { opacity: 0.3; color: var(--ink); pointer-events: none; }
+/* On and busy (recording, saving): it shows it's on and ignores clicks. */
+.bar button.held { pointer-events: none; }
+.glass svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.bar .sep { width: 1px; height: 24px; margin: 0 5px; flex: none; background: rgba(0, 0, 0, 0.13); }
+
+/* Choices (what to make, how to choose): a light track, and a black glass lozenge that slides to the
+   chosen one and bounces with it. */
+.seg {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.045);
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.07);
+}
+.seg + .seg { margin-left: 6px; }
+.lozenge {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--btn);
+  height: var(--btn);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0) 60%), rgba(var(--press), 0.9);
+  box-shadow:
+    inset 1px 1px 0.5px -0.5px rgba(255, 255, 255, 0.5),
+    inset -1px -1px 0.5px -0.5px rgba(255, 255, 255, 0.18),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.12),
+    0 3px 10px rgba(0, 0, 0, 0.3);
+  transform: translateX(var(--x, 0px));
+  transition: transform 0.5s var(--spring), opacity 0.2s, box-shadow 0.3s;
+  pointer-events: none;
+  z-index: 1;
+}
+.lozenge.none { opacity: 0; }
+.lozenge.moving { box-shadow: inset 1px 1px 0.5px -0.5px rgba(255, 255, 255, 0.6), inset 0 0 0 0.5px rgba(255, 255, 255, 0.2), 0 6px 18px rgba(0, 0, 0, 0.38); }
+.seg button[aria-pressed='true'] { color: #fff; }
+.seg button[aria-pressed='true']:hover { background: transparent; }
+.seg:has(> button[aria-pressed='true']:hover) .lozenge { transform: translateX(var(--x, 0px)) translateY(-2px) scale(1.1); }
+.seg:has(> button[aria-pressed='true']:active) .lozenge { transform: translateX(var(--x, 0px)) scale(0.95); transition-duration: 0.08s; }
+
+/* A small black dot: "there's a video in this snip". */
+.bar button.has-dot::before {
+  content: '';
+  position: absolute;
+  right: 5px;
+  top: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #000;
+  box-shadow: 0 0 0 1.5px #fff;
+  z-index: 1;
+}
+
+/* A symbol swap (saved...) pops in. */
+.bar svg.pop { animation: pop 0.45s var(--spring); }
+@keyframes pop { from { transform: scale(0.4); opacity: 0; } }
+
+/* The bar on the page as it is (from the icon). The page isn't drawn in here, so there's nothing for
+   the glass to bend: it's frosted white instead, so the symbols read over any page. */
+body.st-idle { cursor: default; }
+body.st-idle .glass,
+body.st-idle .glass.lg {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(246, 246, 247, 0.96));
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.18),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.7),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 6px 18px rgba(0, 0, 0, 0.16),
+    0 1px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* Right-click the box: Save, Copy, Send to the chat, in clear glass like the bar (glass.js bends
+   what's behind at a thin rim and frosts the middle so the words read; until its filter is in place,
+   frosted white stands in). The one you point at, or reach with ↑ ↓, is lit. */
+#boxMenu {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 40;
+  min-width: 190px;
+  padding: 5px;
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 55%),
+    rgba(255, 255, 255, 0.74);
+  -webkit-backdrop-filter: blur(18px) saturate(1.8);
+  backdrop-filter: blur(18px) saturate(1.8);
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.16),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.55),
+    inset 1.5px 1.5px 1px -1px #fff,
+    inset -1.5px -1.5px 1px -1px rgba(255, 255, 255, 0.8),
+    0 12px 32px rgba(0, 0, 0, 0.3),
+    0 2px 8px rgba(0, 0, 0, 0.12);
+  scale: var(--k);
+  transform-origin: 0 0;
+  animation: menu-in 0.14s ease-out;
+  outline: none;
+  cursor: default;
+}
+@keyframes menu-in { from { opacity: 0; transform: scale(0.94); } }
+#boxMenu.lg {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0) 45%);
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.14),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.5),
+    0 12px 32px rgba(0, 0, 0, 0.26),
+    0 2px 8px rgba(0, 0, 0, 0.12);
+}
+#boxMenu button {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: 36px;
+  margin: 0;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(0, 0, 0, 0.88);
+  font: 500 14px/1 var(--ui);
+  text-align: left;
+  cursor: pointer;
+  outline: none;
+}
+#boxMenu button:focus { background: rgba(0, 0, 0, 0.065); }
+#boxMenu button:active { background: rgba(var(--press), 0.9); color: #fff; }
+#boxMenu button:disabled { opacity: 0.4; cursor: default; }
+#boxMenu svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+#boxMenu .lbl { flex: 1 1 auto; }
+
+/* The highlighter's colour: the marker, with a line of the colour it draws in just under its tip (the
+   two together no taller than the other symbols). */
+#bInk .ico { width: 19px; height: 19px; translate: 0.5px -2px; }
+#bInk .swatch {
+  align-self: center;
+  justify-self: center;
+  width: 14px;
+  height: 3px;
+  translate: 0 8.6px;
+  border-radius: 1.5px;
+  background: var(--hl, #ffe24d);
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+}
+
+/* Its menu: the nine colours, nothing else: one block of small squares, 3 × 3, touching, with rounded
+   outer corners, a hairline edge and no shadow. The one in use has a black ring inside it. */
+#inks {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 40;
+  display: grid;
+  grid-template-columns: repeat(3, 24px);
+  gap: 0;
+  padding: 0;
+  border-radius: 7px;
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.3);
+  scale: var(--k);
+  transform-origin: 0 0;
+  animation: menu-in 0.14s ease-out;
+  outline: none;
+  cursor: default;
+}
+#inks[hidden] { display: none; }
+#inks button {
+  appearance: none;
+  position: relative;
+  width: 24px;
+  height: 24px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--c);
+  cursor: pointer;
+  outline: none;
+  transition: transform 0.3s var(--spring), box-shadow 0.15s;
+}
+#inks button:nth-child(1) { border-top-left-radius: 7px; }
+#inks button:nth-child(3) { border-top-right-radius: 7px; }
+#inks button:nth-child(7) { border-bottom-left-radius: 7px; }
+#inks button:nth-child(9) { border-bottom-right-radius: 7px; }
+#inks button:hover { z-index: 1; transform: scale(1.14); border-radius: 4px; box-shadow: 0 0 0 1.5px #fff; }
+#inks button:active { transform: scale(0.94); transition-duration: 0.08s; }
+#inks button[aria-checked='true'] { box-shadow: inset 0 0 0 2px #000, inset 0 0 0 3.5px #fff; }
+#inks button[aria-checked='true']:hover { box-shadow: 0 0 0 1.5px #fff, inset 0 0 0 2px #000, inset 0 0 0 3.5px #fff; }
+#inks button:focus-visible { z-index: 2; outline: 2px solid #000; outline-offset: 2px; }
+
+/* Hover labels: a small light capsule under the button, name + shortcut. */
+#tip {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 30px;
+  padding: 0 11px;
+  border-radius: 8px;
+  font: 500 13px/1 var(--ui);
+  letter-spacing: 0.005em;
+  color: rgba(0, 0, 0, 0.88);
+  white-space: nowrap;
+  background: rgba(255, 255, 255, 0.9);
+  -webkit-backdrop-filter: blur(14px) saturate(1.6);
+  backdrop-filter: blur(14px) saturate(1.6);
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.16),
+    inset 1px 1px 0.5px -0.5px #fff,
+    0 8px 22px rgba(0, 0, 0, 0.28);
+  opacity: 0;
+  scale: var(--k);
+  transform: translateY(-3px) scale(0.97);
+  transition: opacity 0.12s ease-out, transform 0.2s var(--settle);
+  pointer-events: none;
+}
+#tip.on { opacity: 1; transform: none; }
+#tip .tk { color: rgba(0, 0, 0, 0.45); font-variant-numeric: tabular-nums; }
+#tip .tk:empty { display: none; }
+
+/* ---------- Record, stop, time ---------- */
+#bRec .count {
+  font: 700 19px/1 var(--ui);
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+}
+#bRec .count:empty { display: none; }
+#bRec .count:not(:empty) { animation: pop 0.45s var(--spring); }
+#bRec.counting .ico { display: none; }
+#bRec.attention { animation: attention 1.2s ease-in-out 2; }
+@keyframes attention { 50% { transform: translateY(-2px) scale(1.16); } }
+
+#bTime {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 64px;
+  height: var(--btn);
+  padding: 0 6px 0 8px;
+  font: 600 15px/1 var(--ui);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  color: var(--ink);
+  opacity: 0.3;
+  transition: opacity 0.25s;
+}
+.live-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: rgba(0, 0, 0, 0.28); transition: background-color 0.25s; }
+body.st-recording #bTime, body.st-stopping #bTime, body.st-review #bTime, body.st-exporting #bTime { opacity: 1; }
+body.st-recording .live-dot { background: #000; animation: pulse 1.2s ease-in-out infinite; }
+body.st-recording.rec-paused .live-dot { background: rgba(0, 0, 0, 0.28); animation: none; }
+@keyframes pulse { 50% { opacity: 0.35; } }
+
+/* ---------- Save: a ring fills while the video is made, then a check ---------- */
+#bSave .ring, #bSave .done { display: none; }
+#bSave .ring { width: var(--btn); height: var(--btn); transform: rotate(-90deg); }
+#bSave .ring circle { fill: none; stroke-width: 3; }
+#bSave .ring .track { stroke: rgba(255, 255, 255, 0.35); }
+#bSave .ring .val { stroke: #fff; stroke-linecap: round; stroke-dasharray: 87.96; stroke-dashoffset: 87.96; transition: stroke-dashoffset 0.2s; }
+#bar.exporting #bSave .ico { display: none; }
+#bar.exporting #bSave .ring { display: block; }
+#bar.finished #bSave .ring,
+#bar.finished #bSave .ico { display: none; }
+#bar.finished #bSave .done { display: block; animation: pop 0.45s var(--spring); }
+
+/* ---------- Send to the chat (the Annotated.com logo): a thin arc turns while it goes ---------- */
+#bPost .ico { transition: transform 0.25s var(--spring); }
+#bPost .spin { display: none; width: var(--btn); height: var(--btn); }
+#bPost .spin circle { fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-dasharray: 20 62; }
+#bPost.sending .ico { transform: scale(0.7); }
+#bPost.sending .spin { display: block; animation: turn 0.9s linear infinite; }
+@keyframes turn { to { transform: rotate(360deg); } }
+
+/* ---------- The big white typing line at the bottom ---------- */
+#composer {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  width: min(1180px, 92vw);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  cursor: text;
+  z-index: 5;
+}
+#editorBox { position: relative; width: 100%; }
+#editor, #mirror, #hilite {
+  display: block;
+  width: 100%;
+  margin: 0;
+  border: 0;
+  font: 600 var(--edfs) / 1.22 var(--ui);
+  letter-spacing: -0.012em;
+  text-align: center;
+  padding: 2px 10px;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+  tab-size: 4;
+}
+#editor {
+  position: relative;
+  z-index: 1;
+  resize: none;
+  background: transparent;
+  color: #fff;
+  caret-color: transparent;
+  outline: none;
+  height: calc(var(--edfs) * 1.22 + 4px);
+  max-height: var(--edmax);
+  overflow-x: hidden;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -webkit-user-select: text;
+  user-select: text;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.55), 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+#editor.scroll { overflow-y: auto; }
+#editor::-webkit-scrollbar { display: none; }
+#editor::selection { background: #fff; color: #000; text-shadow: none; }
+#editor::placeholder { color: rgba(255, 255, 255, 0.4); text-shadow: none; opacity: 1; }
+#editor.native-caret { caret-color: #fff; }
+#mirror {
+  position: absolute;
+  left: 0;
+  top: 0;
+  visibility: hidden;
+  pointer-events: none;
+  height: auto;
+  overflow: hidden;
+}
+/* Characters past X's 280 get a highlight behind them, like X's own composer (in white here). */
+#hilite {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 0;
+  color: transparent;
+  pointer-events: none;
+  overflow: hidden;
+}
+#hilite mark { color: transparent; background: rgba(255, 255, 255, 0.32); border-radius: 0.1em; }
+#caret {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 2;
+  width: max(3px, calc(var(--edfs) * 0.075));
+  height: calc(var(--edfs) * 1.1);
+  border-radius: 3px;
+  background: #fff;
+  box-shadow: 0 0 14px rgba(255, 255, 255, 0.55);
+  pointer-events: none;
+  animation: blink 1.06s steps(1, end) infinite;
+}
+#caret.solid { animation: none; }
+#caret.off { display: none; }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* X's character ring: fills up to 280, shows what's left from 20, and the extra count when over. It
+   sits just left of the first line of your text (ui.js places it). */
+#counter {
+  position: absolute;
+  left: 0;
+  top: 0;
+  margin: 0;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  transition: transform 0.35s var(--spring);
+}
+#counter svg { position: absolute; inset: 0; width: 30px; height: 30px; transform: rotate(-90deg); }
+#counter circle { fill: none; stroke-width: 2.5; }
+#counter .track { stroke: rgba(255, 255, 255, 0.25); }
+#counter .val { stroke: #fff; stroke-linecap: round; stroke-dasharray: 75.4; stroke-dashoffset: 75.4; transition: stroke-dashoffset 0.15s, stroke 0.2s; }
+#counter .left { font: 600 12px/1 var(--ui); font-variant-numeric: tabular-nums; color: #fff; }
+#counter.near { transform: scale(1.25); }
+#counter.near .val { stroke-width: 3.5; }
+/* Over the limit: like X, the ring gives way to the count of extra characters. */
+#counter.over svg { display: none; }
+#counter.over .left { color: #fff; font-size: 16px; font-weight: 700; }
+#counter.shake { animation: shake 0.42s ease-in-out; }
+@keyframes shake { 20%, 60% { translate: -5px 0; } 40%, 80% { translate: 5px 0; } }
+
+/* ---------- Bubbles: icons for "done", words only for real problems ---------- */
+#toast {
+  position: fixed;
+  left: 0;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 48px;
+  min-width: 48px;
+  padding: 0 14px;
+  max-width: min(520px, 90vw);
+  border-radius: 12px;
+  font: 500 14px/1.35 var(--ui);
+  opacity: 0;
+  scale: var(--k);
+  transform: scale(0.85);
+  transition: opacity 0.2s, transform 0.4s var(--spring);
+  pointer-events: none;
+  z-index: 40;
+}
+#toast.on { opacity: 1; transform: none; }
+#toast.icon-only { padding: 0; width: 48px; }
+#toast.icon-only.two { width: auto; padding: 0 14px; }
+#toast .ticon, #toast .ticon2 { width: 24px; height: 24px; flex: none; }
+#toast .ticon2:not(.show), #toast .ticon:not(.show) { display: none; }
+#toast .ttext:empty { display: none; }
+#toast.text { padding: 12px 16px; text-align: left; }
+
+.flyer {
+  position: fixed;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+  z-index: 20;
+  will-change: transform, opacity;
+}
+
+/* ---------- Accessibility settings ---------- */
+/* Reduce Transparency: frostier glass that hides more of what's behind. */
+@media (prefers-reduced-transparency: reduce) {
+  .glass { background: rgba(246, 246, 248, 0.97); -webkit-backdrop-filter: blur(30px); backdrop-filter: blur(30px); }
+  #tip { background: #f6f6f8; }
+  #boxMenu { background: #f6f6f8; -webkit-backdrop-filter: blur(30px); backdrop-filter: blur(30px); }
+}
+/* Increase Contrast: solid white with a black border, black symbols, deeper colours. */
+@media (prefers-contrast: more) {
+  :root { --press: 0, 0, 0; --ink: #000; }
+  .glass, body.st-idle .glass, body.st-idle .glass.lg { background: #fff; -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: 0 0 0 1.5px #000, 0 6px 20px rgba(0, 0, 0, 0.45); }
+  .bar .sep { background: rgba(0, 0, 0, 0.6); }
+  .seg { box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.55); }
+  #tip { background: #fff; box-shadow: 0 0 0 1.5px #000; }
+  #boxMenu { background: #fff; -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: 0 0 0 1.5px #000, 0 6px 20px rgba(0, 0, 0, 0.45); }
+  #inks { box-shadow: 0 0 0 1.5px #000; }
+  #inks button { box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.6); }
+  #editor::placeholder { color: rgba(255, 255, 255, 0.7); }
+}
+/* Reduce Motion: no springs or bounces; changes are quick cross-fades. */
+@media (prefers-reduced-motion: reduce) {
+  .glass, .bar button, .lozenge, #card, #toast, #counter, #tip, #handles, #handles .knob { transition-duration: 0.01s !important; }
+  #handles .knob:hover, #handles .knob.on { transform: none; }
+  #boxMenu, #inks { animation: none; }
+  #inks button { transition: none; }
+  #inks button:hover, #inks button:active { transform: none; }
+  .glass.materialize { animation: glass-fade 0.2s ease-out both; }
+  .bar button:hover, .bar button:active { transform: none; }
+  .seg:has(> button[aria-pressed='true']:hover) .lozenge,
+  .seg:has(> button[aria-pressed='true']:active) .lozenge { transform: translateX(var(--x, 0px)); }
+  #caret, .live-dot, #bRec.attention, .bar svg.pop, #bRec .count:not(:empty), #bar.finished #bSave .done, #counter.shake, #bPost.sending .spin { animation: none !important; }
+}
+@keyframes glass-fade { from { opacity: 0; } }

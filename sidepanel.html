@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Annotated.com</title>
+<link rel="icon" href="icons/icon32.png">
+<link rel="stylesheet" href="sidepanel.css">
+<script type="module" src="sidepanel.js"></script>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="i-x" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+  <symbol id="i-up" viewBox="0 0 16 16"><path d="M8 13V3.5M3.8 7.6L8 3.4l4.2 4.2"/></symbol>
+  <symbol id="i-down" viewBox="0 0 16 16"><path d="M8 3v9.5M3.8 8.4L8 12.6l4.2-4.2"/></symbol>
+  <symbol id="i-pen" viewBox="0 0 16 16"><path d="M10.6 3.2l2.2 2.2-7.4 7.4-2.8.6.6-2.8z"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 16 16"><path d="M7 2.9c.4-.8 1.6-.8 2 0l4.6 8.3c.4.8-.2 1.8-1 1.8H3.4c-.9 0-1.4-1-1-1.8z"/><path d="M8 6.4v2.8M8 11.3v.1"/></symbol>
+  <symbol id="i-play" viewBox="0 0 16 16"><path d="M4.5 2.9v10.2c0 .6.6.9 1.1.6l7.9-5.1c.4-.3.4-.9 0-1.2L5.6 2.3c-.5-.3-1.1 0-1.1.6z"/></symbol>
+  <!-- Context menu: reply (a curved arrow back), delete (a bin), like (a thumb up), copy source link (a chain link). -->
+  <symbol id="i-reply" viewBox="0 0 16 16"><path d="M6.4 3.6L2.6 7.2l3.8 3.6M2.8 7.2h6.1c2.6 0 4.5 1.8 4.5 4.4v.9"/></symbol>
+  <symbol id="i-like" viewBox="0 0 16 16"><path d="M5 7.2v6.2H3.1c-.4 0-.7-.3-.7-.7V7.9c0-.4.3-.7.7-.7zM5 7.2l2.6-4.6c.9 0 1.6.7 1.6 1.6v2.3h3.2c.8 0 1.4.7 1.3 1.5l-.7 4.5c-.1.7-.7 1.2-1.4 1.2H5"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 16 16"><path d="M2.8 4.4h10.4M6.4 4.4V3c0-.4.3-.7.7-.7h1.8c.4 0 .7.3.7.7v1.4M4.1 4.4l.6 8.5c0 .5.5.9 1 .9h4.6c.5 0 1-.4 1-.9l.6-8.5M6.7 7v4.4M9.3 7v4.4"/></symbol>
+  <symbol id="i-flag" viewBox="0 0 16 16"><path d="M3.6 14.2V2.4M3.6 2.9c1.5-.9 3-.9 4.4 0s2.9.9 4.4 0v6.3c-1.5.9-3 .9-4.4 0s-2.9-.9-4.4 0"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 16 16"><rect x="5.7" y="5.7" width="7.5" height="7.5" rx="1.6"/><path d="M10.3 5.7V4.3c0-.8-.6-1.4-1.4-1.4H4.3c-.8 0-1.4.6-1.4 1.4v4.6c0 .8.6 1.4 1.4 1.4h1.4"/></symbol>
+  <symbol id="i-save" viewBox="0 0 16 16"><path d="M8 2.6v7.8M4.8 7.3L8 10.5l3.2-3.2M3.2 13.4h9.6"/></symbol>
+  <symbol id="i-link" viewBox="0 0 16 16"><path d="M6.9 9.1a2.6 2.6 0 003.7 0l2.2-2.2a2.6 2.6 0 00-3.7-3.7l-.9.9"/><path d="M9.1 6.9a2.6 2.6 0 00-3.7 0L3.2 9.1a2.6 2.6 0 003.7 3.7l.9-.9"/></symbol>
+  <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7.1" cy="7.1" r="4.4"/><path d="M10.4 10.4l3.2 3.2"/></symbol>
+  <symbol id="i-pic" viewBox="0 0 16 16"><rect x="2.4" y="3.2" width="11.2" height="9.6" rx="1.8"/><circle cx="6" cy="6.6" r="1.1"/><path d="M2.6 11.2l3.2-3 2.6 2.4 1.7-1.5 3.3 3"/></symbol>
+  <symbol id="i-film" viewBox="0 0 16 16"><rect x="2.2" y="3.6" width="8.4" height="8.8" rx="1.8"/><path d="M10.6 6.6l3.2-1.8v6.4l-3.2-1.8"/></symbol>
+</svg>
+<!-- Glass filters (glass.js makes one for each glass capsule: "New posts", the right-click menu). -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><defs id="glassDefs"></defs></svg>
+
+<main id="feed" class="feed">
+  <p id="older" class="older" hidden>Loading earlier posts…</p>
+  <ol id="list" class="list" aria-label="Chat" aria-live="polite"></ol>
+  <!-- Search: the posts that match what's in the search box, in the chat's order. -->
+  <ol id="results" class="list results" aria-label="Search results" hidden></ol>
+  <div id="noResults" class="empty" hidden><p class="title">No posts match</p><p>Try other words, a name or a link.</p></div>
+  <div id="empty" class="empty" hidden>
+    <p class="title">No posts yet</p>
+    <p>Paste or drop an annotation below to start the chat. Everyone with Annotated.com sees it.</p>
+  </div>
+  <div id="loading" class="empty" hidden><p>Loading the chat…</p></div>
+</main>
+
+<button id="newer" class="newer" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-down"/></svg><span>New posts</span></button>
+
+<!-- Right-click a post (or press the menu key on it): reply, delete (your own), like, download (a
+     picture or video), copy it, on an annotation made with Annotated.com go to its source (a new tab), and
+     file a claim (someone else's post). -->
+<div id="menu" class="menu" role="menu" aria-label="Post" tabindex="-1" hidden>
+  <button type="button" role="menuitem" data-act="reply"><svg class="i" aria-hidden="true"><use href="#i-reply"/></svg><span>Reply</span></button>
+  <button type="button" role="menuitem" data-act="delete"><svg class="i" aria-hidden="true"><use href="#i-trash"/></svg><span class="lbl">Delete</span></button>
+  <button type="button" role="menuitem" data-act="like"><svg class="i" aria-hidden="true"><use href="#i-like"/></svg><span class="lbl">Like</span></button>
+  <button type="button" role="menuitem" data-act="download"><svg class="i" aria-hidden="true"><use href="#i-save"/></svg><span>Download</span></button>
+  <button type="button" role="menuitem" data-act="copy"><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg><span class="lbl">Copy image</span></button>
+  <button type="button" role="menuitem" data-act="source"><svg class="i" aria-hidden="true"><use href="#i-link"/></svg><span>Go to source link</span></button>
+  <button type="button" role="menuitem" data-act="claim"><svg class="i" aria-hidden="true"><use href="#i-flag"/></svg><span>File a claim</span></button>
+</div>
+
+<!-- File a claim: for someone whose work a post uses beyond fair use. It goes privately to the people
+     who run this chat (the claims table in its Supabase project), not to the poster. -->
+<dialog id="claim" class="claim" aria-labelledby="claimTitle" aria-describedby="claimNote">
+  <form id="claimForm" novalidate>
+    <h2 id="claimTitle">File a claim</h2>
+    <p id="claimNote" class="note">Is this your work, used beyond fair use? Say what's yours and how to reach you. Your claim goes to the people who run this chat, not to the poster.</p>
+    <label for="claimWhat">What's yours, and why this isn't fair use</label>
+    <textarea id="claimWhat" rows="4" maxlength="2000"></textarea>
+    <label for="claimWho">How to reach you (an email or an X handle)</label>
+    <input id="claimWho" type="text" maxlength="200" autocomplete="email" spellcheck="false">
+    <label class="check"><input id="claimOk" type="checkbox"><span>I own this work or act for its owner, and what I've said is true.</span></label>
+    <p id="claimErr" class="err" role="alert" hidden></p>
+    <div class="actions">
+      <button type="button" id="claimCancel" class="ghost">Cancel</button>
+      <button type="submit" id="claimSend" class="primary">Send claim</button>
+    </div>
+  </form>
+</dialog>
+
+<footer class="dock">
+  <p id="banner" class="banner" role="status" hidden><svg class="i" aria-hidden="true"><use href="#i-warn"/></svg><span id="bannerText"></span><button id="bannerBtn" type="button" hidden></button></p>
+  <form id="composer" class="composer" autocomplete="off">
+    <!-- Replying: just the caption of the post you're answering (or its words); the post is outlined. -->
+    <div id="replying" class="replying" role="note" hidden>
+      <div class="q" title="Go to the post"><div class="qcapbox" hidden><canvas class="qcap"></canvas></div><span class="qtext"></span></div>
+      <button id="unreply" class="mini" type="button" aria-label="Don't reply" title="Don’t reply"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button>
+    </div>
+    <div id="attach" class="attach" hidden>
+      <div class="thumb"></div>
+      <div class="meta"><span class="fname"></span><span class="fsize"></span></div>
+      <button id="unattach" class="mini" type="button" aria-label="Remove attachment" title="Remove"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button>
+      <div class="progress" hidden><i></i></div>
+    </div>
+    <div class="input">
+      <textarea id="text" rows="1" maxlength="2000" placeholder="Right-click an annotation to reply" aria-label="Reply" disabled></textarea>
+      <input id="q" type="search" maxlength="100" placeholder="Search the chat" aria-label="Search the chat" spellcheck="false" hidden>
+      <button id="send" class="send" type="submit" aria-label="Send" title="Send" disabled><svg class="i" aria-hidden="true"><use href="#i-up"/></svg></button>
+    </div>
+    <input id="file" type="file" accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm" hidden>
+  </form>
+  <div class="tools">
+    <button id="pick" class="tool" type="button" aria-label="Add a picture or video" title="Add a picture or video"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg></button>
+    <!-- Search: turns the box above into a search box (pressed again, or Esc: back to your message). -->
+    <button id="find" class="tool find" type="button" aria-label="Search the chat" title="Search the chat" aria-pressed="false"><svg class="i" aria-hidden="true"><use href="#i-search"/></svg></button>
+    <button id="me" class="me" type="button" title="Change your name"><span class="as">Posting as</span> <b id="meName"></b><svg class="i" aria-hidden="true"><use href="#i-pen"/></svg></button>
+    <span id="meX" class="me me-x" hidden><span class="as">Posting as</span> <a id="meXLink" target="_blank" rel="noopener noreferrer"></a></span>
+    <input id="meEdit" class="me-edit" type="text" maxlength="40" aria-label="Your name" hidden>
+    <span id="left" class="left" aria-live="polite"></span>
+    <span id="online" class="online" hidden><span class="dot" aria-hidden="true"></span><span id="onlineN"></span></span>
+  </div>
+</footer>
+
+<div id="drop" class="drop" hidden><p>Drop to attach</p></div>
+</body>
+</html>
