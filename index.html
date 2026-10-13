@@ -77,6 +77,16 @@
   }
   .add:hover { background: var(--blue-hover); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); }
   .add:focus-visible { outline: 3px solid #a8c7fa; outline-offset: 2px; }
+  .tagline {
+    margin: 44px 0 0;
+    font-family: Newsreader, Georgia, "Times New Roman", serif;
+    font-weight: 600;
+    font-size: 30px;
+    line-height: 1.2;
+    letter-spacing: -0.005em;
+    text-wrap: balance;
+  }
+  .tagline + .video { margin-top: 24px; }
   .video {
     margin-top: 40px;
     position: relative;
@@ -98,6 +108,7 @@
     .brand img { width: clamp(40px, 12.8vw, 48px); height: clamp(40px, 12.8vw, 48px); }
     .brand h1 { font-size: clamp(26px, 8.5vw, 32px); }
     .add { width: 100%; height: 44px; }
+    .tagline { margin-top: 32px; font-size: clamp(21px, 6.6vw, 26px); }
     .video { margin-top: 28px; border-radius: 10px; }
   }
   @media (prefers-reduced-motion: reduce) {
@@ -114,6 +125,7 @@
     </div>
     <a class="add" href="Annotated.com.zip" download title="Downloads the extension. Unzip it, open chrome://extensions, turn on Developer mode, and choose Load unpacked.">Add to Chrome</a>
   </header>
+  <h2 class="tagline">Annotate anything. Ask AI. Global chat.</h2>
   <div class="video">
     <iframe src="https://www.youtube-nocookie.com/embed/HK3gKABrgu4?rel=0" title="Annotated.com demo" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
   </div>
