@@ -15,7 +15,7 @@
 --   * Signing in with X shows your @handle and X photo on your posts and likes. The server fills
 --     them in from the X account you signed in with, so nobody can post under someone else's handle.
 --   * Pictures and videos go in a public "posts" bucket, 50 MB per file at most (the Free plan's limit),
---     named <your id>/<random id>.<type>, at most 40 an hour.
+--     named <your id>/<random id>.<type>, at most 40 an hour. A file a post uses can't be replaced.
 --   * Anyone signed in can file a claim on someone else's post (it uses their work beyond fair use).
 --     Claims are private: only the project's owners read them (Table Editor → claims).
 
@@ -94,16 +94,18 @@ end;
 $$;
 revoke all on function public.chat_limit(uuid, text, integer, interval, text) from public, anon, authenticated;
 
--- A plain name can't pass for an @handle (no invisible characters in front of an @ either).
+-- A plain name can't pass for an @handle: no @ in it anywhere, and no invisible or blank-looking
+-- characters (which could hide where a name starts).
 create or replace function public.chat_clean_name(name text)
 returns text
 language sql
 immutable
 set search_path = ''
 as $$
-  select coalesce(nullif(btrim(regexp_replace(
-    regexp_replace(name, '[\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]', '', 'g'),
-    '^[@＠﹫[:space:]]+', '')), ''), 'Someone')
+  select coalesce(nullif(btrim(regexp_replace(regexp_replace(
+    regexp_replace(name, '[\u00AD\u034F\u115F\u1160\u17B4\u17B5\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u206A-\u206F\u2800\u3164\uFEFF\uFFA0]', '', 'g'),
+    '[@＠﹫]', '', 'g'),
+    '[[:space:]]+', ' ', 'g')), ''), 'Someone')
 $$;
 
 -- A file's path is <your id>/<random id>.<type>, and the type matches what the post says it is.
@@ -122,6 +124,7 @@ $$;
 
 create index if not exists messages_created_at_idx on public.messages (created_at desc);
 create index if not exists messages_user_created_idx on public.messages (user_id, created_at desc);
+create index if not exists messages_media_path_idx on public.messages (media_path) where media_path is not null;
 
 -- Only what the chat needs (new tables aren't exposed automatically): everyone reads, signed-in
 -- people post and delete. Nobody updates. The rules below then narrow it to your own posts.
@@ -201,6 +204,10 @@ begin
   new.reply_path := null;
   new.reply_gone := false;
   new.views := 0;
+  -- Where it's from is a web link (the chat makes it one: http or https).
+  if new.source is not null and new.source !~* '^https?://[^[:space:]]+$' then
+    raise exception 'Where it''s from has to be a web link.' using errcode = 'P0001';
+  end if;
   if new.reply_to is null then
     -- Nobody messages everyone: what goes to everyone is an annotation (a picture or video with where
     -- it's from).
@@ -281,6 +288,8 @@ create table if not exists public.likes (
 -- Sign in with X: the liker's X handle and photo (empty without X). Filled in by the server only.
 alter table public.likes add column if not exists x_handle text;
 alter table public.likes add column if not exists x_avatar text;
+
+create index if not exists likes_user_idx on public.likes (user_id);
 
 revoke all on public.likes from anon, authenticated;
 grant select on public.likes to anon, authenticated;
@@ -374,6 +383,7 @@ create table if not exists public.views (
   created_at timestamptz not null default now(),
   primary key (message_id, user_id)
 );
+create index if not exists views_user_idx on public.views (user_id);
 alter table public.views enable row level security;
 revoke all on public.views from anon, authenticated;
 
@@ -434,8 +444,22 @@ $$;
 revoke all on function public.chat_recent_uploads() from public, anon;
 grant execute on function public.chat_recent_uploads() to authenticated;
 
+-- Whether no post uses a file at this place (one that does can't be deleted and uploaded again as
+-- something else: nobody can change a post).
+create or replace function public.chat_path_unused(path text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select not exists (select 1 from public.messages m where m.media_path = path)
+$$;
+revoke all on function public.chat_path_unused(text) from public, anon;
+grant execute on function public.chat_path_unused(text) to authenticated;
+
 -- Upload only into a folder named after yourself, named the way the chat names files
--- (posts/<your id>/<random id>.<type>), and at most 40 files an hour.
+-- (posts/<your id>/<random id>.<type>), at most 40 files an hour, and never in place of a post's file.
 drop policy if exists "Upload into your own folder" on storage.objects;
 create policy "Upload into your own folder" on storage.objects
   for insert to authenticated
@@ -444,6 +468,7 @@ create policy "Upload into your own folder" on storage.objects
     and (storage.foldername(name))[1] = (select auth.jwt() ->> 'sub')
     and name ~ '^[0-9a-f-]{36}/[0-9a-f-]{36}\.(png|jpg|webp|gif|mp4|webm)$'
     and public.chat_recent_uploads() < 40
+    and public.chat_path_unused(name)
   );
 
 -- Removing a file needs to see it and delete it; only your own.
@@ -477,6 +502,7 @@ create table if not exists public.claims (
   post_source text,
   unique (message_id, user_id)
 );
+create index if not exists claims_user_idx on public.claims (user_id);
 alter table public.claims enable row level security;
 revoke all on public.claims from anon, authenticated;
 grant insert on public.claims to authenticated;
@@ -514,3 +540,12 @@ drop trigger if exists claims_before_insert on public.claims;
 create trigger claims_before_insert
   before insert on public.claims
   for each row execute function public.claims_before_insert();
+
+-- 6) Names made before the rules above --------------------------------------------------------------
+
+-- Names posted before a name could have no @ in it, and replies' quotes of them.
+update public.messages set name = public.chat_clean_name(name) where name is distinct from public.chat_clean_name(name);
+update public.likes set name = public.chat_clean_name(name) where name is distinct from public.chat_clean_name(name);
+update public.messages r set reply_name = case when m.x_handle is not null then '@' || m.x_handle else m.name end
+  from public.messages m
+  where r.reply_to = m.id and r.reply_name is distinct from (case when m.x_handle is not null then '@' || m.x_handle else m.name end);

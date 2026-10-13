@@ -38,7 +38,7 @@ Click the icon (or press **Alt+Shift+S**). The bar appears at the top of the pag
 | ▤ Select a post, image or video | Click the thing you want, and the box fits it. |
 | ● Record | Start recording your area, after a 2-second countdown. |
 | ❚❚ Pause | Pause the recording. Press again to carry on. |
-| ■ Stop | Stop the recording. |
+| ■ Stop | Stop the recording (**Esc** does too). |
 | 0:00 | How long the recording is. |
 | 🖍 Highlighter | Choose the highlighter's colour. |
 | ↶ Undo | Remove your last highlight. |

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Annotated.com",
   "short_name": "Annotated.com",
-  "version": "2.9.6",
+  "version": "2.9.7",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuYh7rYMgLE0Z/vPyaez7cj0mjZunIi62N0rAvPX/QWnMiXHo8NeLY94ObYXBd8XFkYhMMktF8tN/5CZ5UpZMZv/dtSs6L86cYBlE408hHqmXCq51qOQEqNftbWLWE955fWH0ypElBgf5qwYwYRH09FyADGZ2Q4veJq8S6GBeVaE1ZcdPOvtwgKcrT4M5+t8Jed+L5lHZjV/Y6RvEuRF0GaVGH+h1fTXiad9xabZ8UluggobyYBhgK43Y53+HTnH5jsZTaz2XhC+/CH0BU7kj38yu1ehStkWbzba+3Ni1oPWgLhRgAeQwlrnwJibHYvJnKkLl0OgAXLgNO70+NHIVcQIDAQAB",
   "description": "Snip or record part of any page, annotate it, save an X-ready PNG or MP4 with its source, and share it in a global chat.",
   "minimum_chrome_version": "120",

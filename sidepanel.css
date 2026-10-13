@@ -79,6 +79,7 @@ button { font: inherit; color: inherit; }
 }
 .post:hover, .post.menu-on { background: var(--row); }
 .post:focus-visible { box-shadow: inset 0 0 0 2px var(--ink); }
+.sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 .post.arrive { animation: arrive 0.28s ease-out both; }
 @keyframes arrive { from { opacity: 0; transform: translateY(4px); } }
 /* Sent from the bar: it flew off the page to the right, so it comes in here from the left. */
@@ -467,7 +468,8 @@ body.searching .send, body.searching #replying, body.searching #attach { display
 
 /* Who you're replying to (inside the box, above your text). */
 .replying { display: flex; align-items: center; gap: 8px; margin: 8px 8px 0; padding: 5px 4px 5px 10px; border-left: 3px solid hsl(var(--h, 30) 45% 48%); border-radius: 4px 8px 8px 4px; background: hsl(var(--h, 30) 40% 50% / 0.08); min-height: 30px; }
-.replying .q { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; cursor: pointer; }
+.replying .q { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; cursor: pointer; border-radius: 4px; }
+.replying .q:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 /* Their annotation's caption, cut from its picture or video, as wide as the box; a long one shows its
    start and fades out. */
 .replying .qcapbox { max-height: 72px; overflow: hidden; border-radius: 4px; box-shadow: 0 0 0 0.5px var(--line-strong); background: #fff; }

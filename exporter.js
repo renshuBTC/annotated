@@ -121,11 +121,12 @@ export async function withSource(out, source, text = {}) {
     }
     parts = [buf.subarray(0, at), ...add, buf.subarray(at)];
   } else if (out.blob.type === 'image/jpeg' && buf[0] === 0xff && buf[1] === 0xd8) {
-    // Comment segments right after the start.
+    // Comment segments right after the start (after its JFIF header, which has to come first).
     const add = [];
     if (ascii) add.push(jpegComment('Annotated.com source: ' + ascii));
     if (info) add.push(jpegComment('Annotated.com text: ' + info));
-    parts = [buf.subarray(0, 2), ...add.filter(Boolean), buf.subarray(2)];
+    const at = buf[2] === 0xff && buf[3] === 0xe0 ? 4 + ((buf[4] << 8) | buf[5]) : 2;
+    parts = [buf.subarray(0, at), ...add.filter(Boolean), buf.subarray(at)];
   }
   return parts ? { ...out, blob: new Blob(parts, { type: out.blob.type }) } : out;
 }

@@ -36,7 +36,9 @@
 
 <main id="feed" class="feed">
   <p id="older" class="older" hidden>Loading earlier posts…</p>
-  <ol id="list" class="list" aria-label="Chat" aria-live="polite"></ol>
+  <ol id="list" class="list" aria-label="Chat"></ol>
+  <!-- (Read out by screen readers: a post that has just come in, not the whole chat each time it changes.) -->
+  <p id="announce" class="sr" aria-live="polite"></p>
   <!-- Search: the posts that match what's in the search box, in the chat's order. -->
   <ol id="results" class="list results" aria-label="Search results" hidden></ol>
   <div id="noResults" class="empty" hidden><p class="title">No posts match</p><p>Try other words, a name or a link.</p></div>
@@ -107,7 +109,7 @@
   <form id="composer" class="composer" autocomplete="off">
     <!-- Replying: just the caption of the post you're answering (or its words); the post is outlined. -->
     <div id="replying" class="replying" role="note" hidden>
-      <div class="q" title="Go to the post"><div class="qcapbox" hidden><canvas class="qcap"></canvas></div><span class="qtext"></span></div>
+      <div class="q" title="Go to the post" role="button" tabindex="0"><div class="qcapbox" hidden><canvas class="qcap"></canvas></div><span class="qtext"></span></div>
       <button id="unreply" class="mini" type="button" aria-label="Don't reply" title="Don’t reply"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button>
     </div>
     <div id="attach" class="attach" hidden>

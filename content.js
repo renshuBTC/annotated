@@ -124,7 +124,9 @@
       visibility: 'visible',
     });
     root.append(frame);
-    document.documentElement.append(host);
+    // (Inside the page's open modal dialog, if it has one: see followDialogs.)
+    const modal = modalDialog();
+    (modal || document.documentElement).append(host);
     scrollbarsOn();
     try {
       host.showPopover();
@@ -137,7 +139,10 @@
     // overlay takes clicks until the bar is drawn, and then only the bar does. The keyboard stays with
     // the page (and the chat) until you press 📷 or 🎥.
     const fromIcon = mode === 'bar';
-    ui = { host, frame, port: channel.port1, token, hole: null, keep: [], only: fromIcon ? [] : null, scale: 1, ready: false, opened: Date.now(), pendingAck: null };
+    ui = { host, frame, port: channel.port1, token, hole: null, keep: [], only: fromIcon ? [] : null, scale: 1, ready: false, opened: Date.now(), pendingAck: null, dialog: null };
+    if (modal) inDialog(modal);
+    ui.dialogs = new MutationObserver(followDialogs);
+    ui.dialogs.observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['open'] });
     if (fromIcon) applyHole();
     channel.port1.onmessage = (e) => onUiMessage(e.data);
     frame.addEventListener(
@@ -202,6 +207,50 @@
     }, 1500);
   }
 
+  // A modal dialog on the page (a lightbox, say) makes everything outside it unclickable, the overlay
+  // too. While one is open, the overlay is inside it (moved, so it isn't reloaded: what you're making
+  // stays), shown again above it; when it closes, the overlay goes back out (before the page can take
+  // the dialog away).
+  function modalDialog() {
+    let top = null;
+    try {
+      for (const d of document.querySelectorAll('dialog')) if (d.matches(':modal')) top = d;
+    } catch {}
+    return top;
+  }
+  function moveHost(to) {
+    if (!ui || ui.host.parentNode === to) return;
+    if (!to.moveBefore || !ui.host.isConnected) return; // (an older Chrome would reload it: it stays put)
+    try {
+      to.moveBefore(ui.host, null);
+    } catch {
+      return;
+    }
+    try {
+      ui.host.hidePopover();
+    } catch {}
+    try {
+      ui.host.showPopover(); // (on top again)
+    } catch {}
+  }
+  function inDialog(d) {
+    if (ui.dialog) ui.dialog.removeEventListener('beforetoggle', onDialogToggle);
+    ui.dialog = d;
+    if (d) d.addEventListener('beforetoggle', onDialogToggle);
+  }
+  function onDialogToggle(e) {
+    if (!ui || e.newState !== 'closed' || e.target !== ui.dialog) return;
+    inDialog(null);
+    moveHost(document.documentElement);
+  }
+  function followDialogs() {
+    if (!ui) return;
+    const d = modalDialog();
+    if (d === ui.dialog && (!d || ui.host.parentNode === d)) return;
+    moveHost(d || document.documentElement);
+    inDialog(d && ui.host.parentNode === d ? d : null);
+  }
+
   // The overlay went without the overlay saying so (the page left or removed it): tell the worker, so
   // the icon and the chat know.
   function closedHere() {
@@ -212,14 +261,24 @@
       chrome.runtime.sendMessage({ type: 'snip:closed', token, closeChat: false }).catch(() => {});
     } catch {}
   }
-  function onPageHide() {
+  function onPageHide(e) {
+    if (e && e.isTrusted === false) return; // (the page's own made-up event: it isn't going anywhere)
     closedHere();
+  }
+
+  // Leaving the page while a video is being made, or one is waiting to be saved: Chrome asks first.
+  function onLeave(e) {
+    if (!ui) return;
+    e.preventDefault();
+    e.returnValue = ''; // (older Chrome)
   }
 
   function teardown() {
     if (!ui) return;
-    const { host, port, watchdog, guard } = ui;
+    const { host, port, watchdog, guard, dialogs, dialog } = ui;
     ui = null;
+    if (dialogs) dialogs.disconnect();
+    if (dialog) dialog.removeEventListener('beforetoggle', onDialogToggle);
     scrollbarsOff();
     clearInterval(watchdog);
     if (guard) guard.disconnect();
@@ -237,28 +296,30 @@
     window.removeEventListener('resize', onResize, true);
     document.removeEventListener('fullscreenchange', onFullscreen, true);
     window.removeEventListener('pagehide', onPageHide, true);
+    window.removeEventListener('beforeunload', onLeave);
   }
 
   /* ---------- the page's own scrollbar, while Annotated.com is open ---------- */
-  // Thin, and out of sight until you scroll (or point at it); it fades away a second after. Only the
-  // page's own scrollbar: anything that scrolls inside the page keeps its look. Put back on close.
-  let sb = null; // { style, timer, near, shown, thin }
+  // Out of sight until you scroll (or point at it); it fades away a second after. Only the page's own
+  // scrollbar, at its own width: anything that scrolls inside the page keeps its look. Put back on close.
+  let sb = null; // { style, timer, near, shown, inner }
   function scrollbarsOn() {
     if (sb) return;
     const root = document.documentElement;
-    let thin = true;
+    // What the page's own scrollbars inside it get from the page (they keep it).
+    let inner = 'auto';
     try {
-      thin = getComputedStyle(root).scrollbarWidth !== 'none'; // a page that hides it keeps it hidden
+      inner = getComputedStyle(root).scrollbarColor || 'auto';
     } catch {}
-    sb = { style: document.createElement('style'), timer: 0, near: false, shown: true, thin };
+    sb = { style: document.createElement('style'), timer: 0, near: false, shown: true, inner };
     sb.style.setAttribute('data-annotated', 'scrollbar');
     paintScrollbar(false);
     const gutter = () => window.innerWidth - root.clientWidth;
     const before = gutter();
     (document.head || root).append(sb.style);
-    // A page that hid its scrollbar its own way (so there was no gutter) keeps it hidden: restyling it
-    // would bring it back and make the page narrower than its picture.
-    if (before === 0 && gutter() > 0) sb.style.remove();
+    // A page that styled its scrollbar its own way (hidden, or narrower) keeps it: restyling it would
+    // change its width, and the page would move (no longer match its picture).
+    if (gutter() !== before) sb.style.remove();
     window.addEventListener('scroll', onPageScroll, { capture: true, passive: true });
     window.addEventListener('pointermove', onPagePointer, { capture: true, passive: true });
   }
@@ -266,7 +327,7 @@
     if (!sb || sb.shown === show) return;
     sb.shown = show;
     const color = show ? 'rgba(128, 128, 128, 0.6) transparent' : 'transparent transparent';
-    sb.style.textContent = `html{${sb.thin ? 'scrollbar-width:thin!important;' : ''}scrollbar-color:${color}!important}:where(html *){scrollbar-color:auto}`;
+    sb.style.textContent = `html{scrollbar-color:${color}!important}:where(html *){scrollbar-color:${sb.inner}}`;
   }
   function scrollbarSeen() {
     paintScrollbar(true);
@@ -371,7 +432,7 @@
     setTimeout(() => {
       if (!ui || !ui.hole) return;
       const a = document.activeElement;
-      if (a && a !== ui.host && a.tagName === 'IFRAME') refocusUi();
+      if (a && a !== ui.host && a.tagName === 'IFRAME' && VIDEO_IFRAME.test(a.src || '')) refocusUi();
     }, 0);
   }
 
@@ -420,6 +481,16 @@
           break;
         case 'words':
           result = wordsIn(m.rect);
+          break;
+        case 'wordList':
+          // Every word on screen, the moment the page is pictured (your area is chosen afterwards).
+          if (m.uiWidth) ui.scale = ui.frame.getBoundingClientRect().width / m.uiWidth || 1;
+          result = wordList({ x: 0, y: 0, w: window.innerWidth / ui.scale, h: window.innerHeight / ui.scale });
+          break;
+        case 'guard':
+          if (m.on) window.addEventListener('beforeunload', onLeave);
+          else window.removeEventListener('beforeunload', onLeave);
+          result = true;
           break;
         case 'hole':
           ui.hole = m.rect || null;
@@ -677,15 +748,26 @@
   // list item...), a space where a line just wraps. Our own overlay, hidden text, form fields and other
   // frames are left out; open shadow roots are read too. At most `max` letters.
   const NO_WORDS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'TEXTAREA', 'SELECT', 'OPTION', 'IFRAME', 'SVG', 'svg', 'CANVAS', 'VIDEO', 'AUDIO']);
-  function wordsIn(rect, max = 4000) {
-    if (!rect) return '';
+  // The words of the page's text in an area, as you see them there: not hidden, not cut off by what
+  // they scroll in, and not under something else (a pop-up, a header that stays put). Each, in reading
+  // order: [word, x, y (its middle), bottom, block, a space after it, not at its text's start], in the
+  // overlay's units.
+  const COVERING = new Set(['IMG', 'VIDEO', 'CANVAS', 'IFRAME', 'EMBED', 'OBJECT']);
+  function wordList(rect, maxWords = 20000) {
+    if (!rect) return [];
     const k = ui ? ui.scale : 1;
     const L = rect.x * k;
     const T = rect.y * k;
     const R = (rect.x + rect.w) * k;
     const B = (rect.y + rect.h) * k;
     const range = document.createRange();
-    const seenVis = new Map(); // element -> can you see its text?
+    const styles = new Map();
+    const style = (e) => {
+      let st = styles.get(e);
+      if (!st) styles.set(e, (st = getComputedStyle(e)));
+      return st;
+    };
+    const seenVis = new Map(); // element -> can you see it?
     const visible = (elem) => {
       let v = seenVis.get(elem);
       if (v === undefined) {
@@ -694,29 +776,113 @@
       }
       return v;
     };
-    const blocks = new Map(); // element -> the block of text it's in
+    const up = (e) => e.assignedSlot || e.parentElement || (e.parentNode && e.parentNode.host) || null;
+    const blocks = new Map(); // element -> the block of text it's in (a number)
+    let blockCount = 0;
+    const blockEls = new Map();
     const blockOf = (elem) => {
       let b = blocks.get(elem);
       if (b === undefined) {
-        const d = getComputedStyle(elem).display;
+        const d = style(elem).display;
         const host = elem.parentElement || (elem.getRootNode && elem.getRootNode().host);
         b = !host || !/^(inline|contents|ruby)/.test(d) ? elem : blockOf(host);
         blocks.set(elem, b);
       }
       return b;
     };
-    let out = '';
-    let last = null; // the last word taken: its box, its block, and whether a space followed it
+    const blockId = (b) => {
+      let id = blockEls.get(b);
+      if (id === undefined) blockEls.set(b, (id = ++blockCount));
+      return id;
+    };
+    // Where an element's content can show (cut off by its own and its ancestors' overflow: hidden,
+    // scroll…): { l, t, r, b } on screen, or null for anywhere.
+    const clips = new Map();
+    const meet = (a, c) => (!a ? c : !c ? a : { l: Math.max(a.l, c.l), t: Math.max(a.t, c.t), r: Math.min(a.r, c.r), b: Math.min(a.b, c.b) });
+    const contentClip = (e) => {
+      if (!e || e.nodeType !== 1) return null;
+      if (clips.has(e)) return clips.get(e);
+      clips.set(e, null); // (while working it out)
+      const st = style(e);
+      let c = boxClip(e, st);
+      if (st.display !== 'contents') {
+        const cx = st.overflowX !== 'visible' || /paint|strict|content/.test(st.contain || '');
+        const cy = st.overflowY !== 'visible' || /paint|strict|content/.test(st.contain || '');
+        if (cx || cy) {
+          const r = e.getBoundingClientRect();
+          c = meet(c, { l: cx ? r.left : -Infinity, t: cy ? r.top : -Infinity, r: cx ? r.right : Infinity, b: cy ? r.bottom : Infinity });
+        }
+      }
+      clips.set(e, c);
+      return c;
+    };
+    // What cuts off an element's own box: what holds it (a box placed absolutely: only the box it's
+    // placed in, and up; one fixed on the screen: nothing).
+    const boxClip = (e, st) => {
+      if (st.position === 'fixed') return null;
+      let a = up(e);
+      if (st.position === 'absolute') while (a && style(a).position === 'static' && style(a).transform === 'none') a = up(a);
+      return contentClip(a);
+    };
+    // Something over a word: a picture, a video, or anything with a background you can't see through.
+    const alpha = (c) => {
+      if (!c || c === 'transparent') return 0;
+      const sl = c.match(/\/\s*([\d.]+)(%?)\s*\)$/);
+      if (sl) return sl[2] ? parseFloat(sl[1]) / 100 : parseFloat(sl[1]);
+      const a = c.match(/^rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\s*\)$/);
+      return a ? parseFloat(a[1]) : 1;
+    };
+    const hiding = new Map();
+    const hides = (e) => {
+      let h = hiding.get(e);
+      if (h === undefined) {
+        const st = style(e);
+        h = (COVERING.has(e.tagName) || alpha(st.backgroundColor) >= 0.85 || st.backgroundImage !== 'none' || (st.backdropFilter || 'none') !== 'none') && parseFloat(st.opacity) >= 0.5 && visible(e);
+        hiding.set(e, h);
+      }
+      return h;
+    };
+    const holding = new Map(); // element -> it and everything that holds it
+    const holders = (p) => {
+      let set = holding.get(p);
+      if (!set) {
+        set = new Set();
+        for (let e = p; e; e = up(e)) set.add(e);
+        holding.set(p, set);
+      }
+      return set;
+    };
+    const under = (p, x, y) => {
+      if (style(p).pointerEvents === 'none') return false; // (can't tell: what's over it would be found, not it)
+      const root = p.getRootNode();
+      let stack;
+      try {
+        stack = (root && root !== document && root.elementsFromPoint ? root : document).elementsFromPoint(x, y);
+      } catch {
+        return false;
+      }
+      const hold = holders(p);
+      for (const e of stack) {
+        if (hold.has(e)) return false; // down to the word's own element: nothing over it
+        if (ui && e === ui.host) continue;
+        if (hides(e)) return true;
+      }
+      return false;
+    };
+    const out = [];
     let budget = 60000; // nodes looked at, at most
     const take = (n) => {
       const p = n.parentElement;
       if (!p || !visible(p)) return;
       const pr = p.getBoundingClientRect();
       if (pr.right < L || pr.left > R || pr.bottom < T || pr.top > B) return;
+      const clip = contentClip(p);
+      if (clip && (clip.r <= clip.l || clip.b <= clip.t || clip.r < L || clip.l > R || clip.b < T || clip.t > B)) return;
       const block = blockOf(p);
       const re = /\S+/g;
+      const found = [];
       let m;
-      while ((m = re.exec(n.data)) && out.length < max) {
+      while ((m = re.exec(n.data)) && out.length + found.length < maxWords) {
         range.setStart(n, m.index);
         range.setEnd(n, m.index + m[0].length);
         const b = range.getClientRects()[0];
@@ -724,15 +890,21 @@
         const cx = b.left + b.width / 2;
         const cy = b.top + b.height / 2;
         if (cx < L || cx > R || cy < T || cy > B) continue;
+        if (clip && (cx < clip.l || cx > clip.r || cy < clip.t || cy > clip.b)) continue; // cut off
         const end = m.index + m[0].length;
-        if (last) {
-          // a new line for a new block lower down; a space where the page has one (a link's words and the
-          // comma right after it stay together)
-          if (block !== last.block && cy > last.box.bottom - 1) out += '\n';
-          else if (last.spaceAfter || m.index > 0 || block !== last.block) out += ' ';
+        found.push({ w: [m[0], cx / k, cy / k, b.bottom / k, blockId(block), end < n.data.length ? 1 : 0, m.index > 0 ? 1 : 0], cx, cy });
+      }
+      // What's over them: asked at both ends of each line (and in between only when those differ).
+      for (let i = 0; i < found.length; ) {
+        let j = i;
+        while (j + 1 < found.length && Math.abs(found[j + 1].cy - found[i].cy) < 1) j++;
+        const a = under(p, found[i].cx, found[i].cy);
+        const z = j > i ? under(p, found[j].cx, found[j].cy) : a;
+        for (let x = i; x <= j; x++) {
+          const hid = x === i ? a : x === j ? z : a === z ? a : under(p, found[x].cx, found[x].cy);
+          if (!hid) out.push(found[x].w);
         }
-        out += m[0];
-        last = { box: b, block, spaceAfter: end < n.data.length };
+        i = j + 1;
       }
     };
     const walk = (root) => {
@@ -740,7 +912,7 @@
         acceptNode: (n) =>
           n.nodeType === Node.ELEMENT_NODE && (NO_WORDS.has(n.tagName) || (ui && n === ui.host)) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
       });
-      for (let n = w.nextNode(); n && out.length < max && --budget > 0; n = w.nextNode()) {
+      for (let n = w.nextNode(); n && out.length < maxWords && --budget > 0; n = w.nextNode()) {
         if (n.nodeType === Node.TEXT_NODE) {
           if (n.data.trim()) take(n);
         } else if (n.shadowRoot) {
@@ -751,7 +923,31 @@
     try {
       if (document.body) walk(document.body);
     } catch {}
+    return out;
+  }
+
+  // Words as text: a new line for a new block lower down; a space where the page has one (a link's
+  // words and the comma right after it stay together). (The overlay has the same, for the words it was
+  // given when the page was pictured.)
+  function joinWords(list, area = null, max = 4000) {
+    let out = '';
+    let last = null;
+    for (const [t, x, y, bottom, block, spaceAfter, mid] of list) {
+      if (area && (x < area.x || x > area.x + area.w || y < area.y || y > area.y + area.h)) continue;
+      if (last) {
+        if (block !== last.block && y > last.bottom - 1) out += '\n';
+        else if (last.spaceAfter || mid || block !== last.block) out += ' ';
+      }
+      out += t;
+      last = { bottom, block, spaceAfter };
+      if (out.length >= max) break;
+    }
     return out.replace(/[ \t]+\n/g, '\n').trim().slice(0, max);
+  }
+
+  function wordsIn(rect, max = 4000) {
+    if (!rect) return '';
+    return joinWords(wordList(rect, 2000), null, max); // (2000 words: well over the 4000 letters kept)
   }
 
   /* ---------- highlighting text in your snip, like selecting it ---------- */
@@ -924,18 +1120,22 @@
 
   /* ---------- the source link ---------- */
 
-  const TRACKING = /^(utm_[a-z_]+|fbclid|gclid|dclid|gbraid|wbraid|msclkid|yclid|ttclid|twclid|igshid|igsh|mc_cid|mc_eid|_ga|_gl|mkt_tok|spm|vero_id|oly_anon_id|oly_enc_id|rb_clickid|trk|trkCampaign|sc_campaign|hsCtaTracking|__hssc|__hstc|__hsfp|hsa_[a-z]+|ref_src|ref_url|cmpid|ncid|sr_share|share_id|si)$/i;
+  const TRACKING = /^(utm_[a-z_]+|fbclid|gclid|dclid|gbraid|wbraid|msclkid|yclid|ttclid|twclid|igshid|igsh|mc_cid|mc_eid|_ga|_gl|mkt_tok|spm|vero_id|oly_anon_id|oly_enc_id|rb_clickid|trk|trkCampaign|sc_campaign|hsCtaTracking|__hssc|__hstc|__hsfp|_hsenc|_hsmi|hsa_[a-z]+|ck_subscriber_id|ml_subscriber|ml_subscriber_hash|elqTrackId|elqTrack|ref_src|ref_url|cmpid|ncid|sr_share|share_id|si)$/i;
 
   // Secrets in an address (it ends up in a public picture and the chat): any parameter whose name has
   // one of these words in it (reset_password_token, oauth_token, key, code + state, rlkey, jwt...), and
   // any value that looks like a key or a login token, whatever its name.
   const SECRET_WORDS = new Set(['token', 'tokens', 'secret', 'password', 'passwd', 'pwd', 'pass', 'passcode', 'auth', 'authorization', 'oauth', 'session', 'sessionid', 'sid', 'sig', 'signature', 'key', 'apikey', 'rlkey', 'code', 'ticket', 'jwt', 'otp', 'nonce', 'verifier', 'state', 'credential', 'credentials', 'private', 'access', 'refresh', 'saml', 'assertion', 'magic', 'invite', 'confirmation', 'reset']);
+  // (Also run together, as many sites write them: accesstoken, PHPSESSID, JSESSIONID, CFTOKEN, csrf...)
+  const SECRET_PARTS = /token|secret|passw|sessid|sessionid|apikey|csrf|xsrf|credential/;
   function secretName(name) {
     const words = String(name)
       .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
       .toLowerCase()
       .split(/[^a-z0-9]+/);
-    return words.some((w) => SECRET_WORDS.has(w)) || /^x-(amz|goog)-/i.test(name);
+    if (words.some((w) => SECRET_WORDS.has(w)) || /^x-(amz|goog)-/i.test(name)) return true;
+    const flat = String(name).toLowerCase().replace(/[^a-z0-9]/g, '');
+    return SECRET_PARTS.test(flat) || /^(cfid|zenid|oscsid)$/.test(flat);
   }
   function secretValue(v) {
     if (/^eyJ[\w-]{6,}\.[\w-]+\.[\w-]*$/.test(v)) return true; // a JWT
@@ -954,19 +1154,21 @@
     // stay exactly as they were written.
     u.username = '';
     u.password = '';
+    const dec = (x) => {
+      try {
+        return decodeURIComponent(x.replace(/\+/g, ' '));
+      } catch {
+        return x;
+      }
+    };
+    // A login kept in the path itself (/page;jsessionid=…) goes too.
+    if (u.pathname.includes(';')) u.pathname = u.pathname.replace(/;([^/;=]*)=([^/;]*)/g, (all, n, v) => (secretName(dec(n)) || secretValue(dec(v)) ? '' : all));
     const kept = u.search
       .slice(1)
       .split('&')
       .filter((pair) => {
         if (!pair) return false;
         const eq = pair.indexOf('=');
-        const dec = (x) => {
-          try {
-            return decodeURIComponent(x.replace(/\+/g, ' '));
-          } catch {
-            return x;
-          }
-        };
         const name = dec(eq < 0 ? pair : pair.slice(0, eq));
         const value = eq < 0 ? '' : dec(pair.slice(eq + 1));
         return !(TRACKING.test(name) || secretName(name) || secretValue(value));

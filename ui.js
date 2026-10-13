@@ -125,6 +125,7 @@ const app = {
   barPos: null, // where you dragged the bar (its top-left), or null: top centre
   copied: null, // the last video made for copying: { key, blob, meta }
   highlights: [], // marked on your snip: [{ rects: [{ x, y, w, h }] (page CSS px), dark, ink }]
+  edits: [], // what Ctrl+Z undoes, last first: 'h' (a highlight) or { from } (typing, from that text)
   ink: 'yellow', // the highlighter's colour (exporter.js INKS; the marker in the bar), kept for next time
   paused: false, // the recording is paused (❚❚ or Space)
   gen: 0, // which snip this is: a new one (a new area, a recording) bumps it, so a save, copy or send of
@@ -183,7 +184,7 @@ function onPageMessage(m) {
 // A key pressed while the page had the keyboard (recording): treat it as typed here.
 function onForwardedKey(m) {
   const st = app.state;
-  if (m.key === 'Escape') return m.repeat ? undefined : requestClose();
+  if (m.key === 'Escape') return m.repeat ? undefined : escapeKey();
   if (m.key === ' ' && spacePauses(m)) return m.repeat ? undefined : togglePause();
   if (m.key === 'Enter' && m.repeat) return;
   if (!['armed', 'countdown', 'recording', 'stopping', 'review', 'compose'].includes(st)) return;
@@ -231,7 +232,7 @@ async function boot() {
   const sess = await send({ type: 'snip:session', token: TOKEN });
   if (!sess || sess.error) throw new Error((sess && sess.error) || 'Could not start.');
   app.session = sess;
-  app.source = sess.url;
+  app.source = webAddress(sess.url); // (until the page says which link: a moment)
   if (sess.zoom > 0) app.zoom = sess.zoom;
   app.info = await page('info', { uiWidth: innerWidth });
   sizeEditorFont();
@@ -247,7 +248,10 @@ async function boot() {
   await loadInk();
   keepAlive();
   if (START_BAR) enterIdle();
-  else enterSelect();
+  else {
+    enterSelect();
+    if (app.shot) app.shotWords = takeWords();
+  }
 }
 
 // The open bar checks in now and then, so the icon knows (right in your click) that it's open here.
@@ -277,12 +281,88 @@ async function loadShot(dataUrl) {
   el.frozen.src = dataUrl;
   await el.frozen.decode();
   const bitmap = await createImageBitmap(el.frozen);
-  if (app.shot && app.shot.bitmap) app.shot.bitmap.close();
-  app.shot = { bitmap, scale: bitmap.width / innerWidth };
+  const old = app.shot;
+  const shot = { bitmap, scale: bitmap.width / innerWidth };
+  // Your highlights mark words in the picture: if the page looks different there now (it scrolled, say,
+  // while 🎥 showed it live), they'd sit on other words, so they go.
+  if (app.highlights.length && old && old.bitmap && looksDifferent(old, shot, highlightBounds())) {
+    app.highlights = [];
+    app.edits = app.edits.filter((x) => x !== 'h');
+    el.hls.replaceChildren();
+  }
+  if (old && old.bitmap) old.bitmap.close();
+  app.shot = shot;
+  app.shotStale = false;
+  app.shotWords = null; // (the words with it: see takeWords)
   // The page as it was, at its size then: if the window narrows later (the chat opening beside it),
   // it's cropped, not squeezed.
   el.frozen.style.width = innerWidth + 'px';
   el.frozen.style.height = innerHeight + 'px';
+}
+
+// Where all your highlights are (page CSS px).
+function highlightBounds() {
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const h of app.highlights) {
+    for (const r of h.rects) {
+      x0 = Math.min(x0, r.x);
+      y0 = Math.min(y0, r.y);
+      x1 = Math.max(x1, r.x + r.w);
+      y1 = Math.max(y1, r.y + r.h);
+    }
+  }
+  return x1 > x0 && y1 > y0 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
+}
+
+// Whether two pictures of the page differ in an area: both shrunk to a few dozen pixels and compared.
+function looksDifferent(a, b, r) {
+  if (!r) return false;
+  const W = 64;
+  const H = Math.max(8, Math.min(64, Math.round((W * r.h) / r.w)));
+  const grab = (shot) => {
+    const c = new OffscreenCanvas(W, H);
+    const g = c.getContext('2d', { willReadFrequently: true });
+    const s = shot.scale;
+    g.drawImage(shot.bitmap, r.x * s, r.y * s, Math.max(1, r.w * s), Math.max(1, r.h * s), 0, 0, W, H);
+    return g.getImageData(0, 0, W, H).data;
+  };
+  try {
+    const p = grab(a);
+    const q = grab(b);
+    let sum = 0;
+    for (let i = 0; i < p.length; i += 4) sum += Math.abs(p[i] - q[i]) + Math.abs(p[i + 1] - q[i + 1]) + Math.abs(p[i + 2] - q[i + 2]);
+    return sum / (W * H * 3) > 3;
+  } catch {
+    return true;
+  }
+}
+
+// The words on the page as it's pictured, where they are (your area is chosen from the picture afterwards,
+// and the page may have changed by the time you save). Asked right after the picture, once the overlay is
+// back (the page takes a moment to give them on a big page, and nothing else waits for them).
+function takeWords() {
+  return page('wordList', { uiWidth: innerWidth }).catch(() => null);
+}
+
+// The words in your area, as text: a new line for a new block lower down, a space where the page has
+// one. (As the page joins them: see joinWords there.)
+function joinWords(list, area, max = 4000) {
+  let out = '';
+  let last = null;
+  for (const [t, x, y, bottom, block, spaceAfter, mid] of list) {
+    if (area && (x < area.x || x > area.x + area.w || y < area.y || y > area.y + area.h)) continue;
+    if (last) {
+      if (block !== last.block && y > last.bottom - 1) out += '\n';
+      else if (last.spaceAfter || mid || block !== last.block) out += ' ';
+    }
+    out += t;
+    last = { bottom, block, spaceAfter };
+    if (out.length >= max) break;
+  }
+  return out.replace(/[ \t]+\n/g, '\n').trim().slice(0, max);
 }
 
 // Take a fresh picture of the page (hide the overlay for a moment).
@@ -303,6 +383,7 @@ async function refreshShotNow() {
   } finally {
     await page('visible', { visible: true });
   }
+  app.shotWords = takeWords(); // (as pictured; asked once the overlay is back, so it isn't kept hidden)
 }
 
 /* ------------------------------------------------------------------ */
@@ -315,6 +396,13 @@ function setState(s) {
   app.state = s;
   bodyState();
   syncBar();
+  // Leaving the page (a link clicked in your area while recording, say) asks first while a video is
+  // being made or one is waiting: it would be lost.
+  const guard = ['recording', 'stopping', 'review', 'exporting'].includes(s);
+  if (guard !== app.guarded) {
+    app.guarded = guard;
+    page('guard', { on: guard }).catch(() => {});
+  }
 }
 
 // The body's st-/kind-/shape- classes (others, like busy, stay as they are).
@@ -671,6 +759,7 @@ function resetSnip() {
   app.repick = null;
   app.copied = null;
   app.highlights = [];
+  app.edits = [];
   el.hls.replaceChildren();
   app.videoHere = false;
   app.cancelExport = false;
@@ -719,6 +808,8 @@ async function startSelecting(shape, kind = app.kind) {
     setBusy(false);
     starting = false;
   }
+  // The page's words, as pictured a moment ago (asked once the bar is back up and has the keyboard).
+  if (app.state === 'select' && app.shot && !app.shotWords) app.shotWords = takeWords();
 }
 
 // Wait until the page has kept its size for a moment (at most about a second).
@@ -741,7 +832,7 @@ async function settleViewport() {
 /* Select: the dark screen, toolbar, dragging                          */
 /* ------------------------------------------------------------------ */
 
-function enterSelect() {
+function enterSelect({ fresh = false } = {}) {
   const prevState = app.state;
   app.gen++;
   closeBoxMenu();
@@ -757,6 +848,24 @@ function enterSelect() {
   app.pickDepth = null;
   el.bTime.textContent = '0:00';
   syncBar();
+  if (fresh && app.shotStale) retakeForSelect();
+}
+
+// Choosing again after 🎥 showed the page live (it may have scrolled), or after the window changed: a new
+// picture of the page as it is now, and where its posts and videos are now.
+async function retakeForSelect() {
+  const gen = app.gen;
+  el.sel.hidden = true;
+  app.hover = null;
+  try {
+    await refreshShot();
+  } catch {}
+  if (app.state !== 'select' || gen !== app.gen) return;
+  try {
+    app.info = await page('info', { uiWidth: innerWidth });
+  } catch {}
+  app.shotFresh = false; // (as when you started choosing: the picture is the moment you chose)
+  showFrozen(true);
 }
 
 // One bar, the same all the way through: this only dims what can't be used right now, and shows
@@ -1069,7 +1178,7 @@ function onShape(shape) {
   }
   if (!['compose', 'armed'].includes(app.state)) return;
   keepTextForRepick();
-  enterSelect();
+  enterSelect({ fresh: true });
   setShape(shape);
 }
 
@@ -1455,7 +1564,8 @@ async function flyText(from, fromFont, to) {
 async function enterCompose({ videoHere = false } = {}) {
   app.gen++;
   if (app.pick) app.region = app.pick; // a picture is always of your whole selection
-  if (!app.shot) {
+  if (shotJob) await shotJob.catch(() => {}); // (a new picture being taken: that one)
+  if (!app.shot || app.shotStale) {
     try {
       await refreshShot();
     } catch (e) {
@@ -1479,6 +1589,17 @@ async function enterCompose({ videoHere = false } = {}) {
   refreshSource({ frozen: app.shotFresh !== true });
 }
 
+// The page's address without its query or #, as a stand-in until the page gives its cleaned link: a file
+// on your computer (or anything else not on the web) has no source link.
+function webAddress(href) {
+  try {
+    const u = new URL(href);
+    return u.protocol === 'https:' || u.protocol === 'http:' ? u.origin + u.pathname : '';
+  } catch {
+    return '';
+  }
+}
+
 // Ask the page for the best link (a post's own URL on X, the video time on YouTube...).
 function refreshSource({ frozen = false } = {}) {
   const region = app.region;
@@ -1489,7 +1610,7 @@ function refreshSource({ frozen = false } = {}) {
   }
   return page('source', opts)
     .then((r) => {
-      if (!r || !r.url || region !== app.region) return;
+      if (!r || typeof r.url !== 'string' || region !== app.region) return; // ('' : no public source)
       const changed = r.url !== app.source;
       app.source = r.url;
       if (changed && app.hasCaption) {
@@ -1680,6 +1801,7 @@ async function onHighlightUp(e) {
   if (d.moved) {
     if (d.rects.length) {
       app.highlights.push({ rects: d.rects, dark: hlDark(d.rects), ink: d.ink });
+      app.edits.push('h');
       app.copied = null;
     }
     drawHighlights();
@@ -1688,6 +1810,13 @@ async function onHighlightUp(e) {
   // A click: on a highlight, it goes; on the video, it plays or pauses.
   if (d.hit >= 0) {
     app.highlights.splice(d.hit, 1);
+    // (and its place in what Ctrl+Z undoes: the highlights' marks are in the order they were made)
+    for (let i = 0, n = -1; i < app.edits.length; i++) {
+      if (app.edits[i] === 'h' && ++n === d.hit) {
+        app.edits.splice(i, 1);
+        break;
+      }
+    }
     app.copied = null;
     drawHighlights();
     return syncBar();
@@ -1699,6 +1828,8 @@ async function onHighlightUp(e) {
 function undoHighlight() {
   if (!app.highlights.length) return false;
   app.highlights.pop();
+  const i = app.edits.lastIndexOf('h');
+  if (i >= 0) app.edits.splice(i, 1);
   app.copied = null;
   drawHighlights();
   syncBar(); // (the undo button dims when there's nothing left)
@@ -1978,8 +2109,13 @@ function done(gen = app.gen) {
 function copy() {
   if (!['compose', 'review'].includes(app.state)) return;
   openChatNow(); // right in your click or key: afterwards the bar and the chat stay
-  if (app.state === 'compose') return copyImage();
-  return copyVideo();
+  // One copy at a time: pressing again (or holding Ctrl+C) while one is under way does nothing more, and
+  // Save or Send pressed meanwhile waits for it (see copied()).
+  if (copying) return copying;
+  const p = app.state === 'compose' ? copyImageNow() : copyVideo();
+  copying = p;
+  p.finally(() => copying === p && (copying = null)).catch(() => {});
+  return p;
 }
 
 // Alongside what's copied, for the chat (a web format other apps ignore): where it's from, so the
@@ -1995,13 +2131,6 @@ function clipMeta(extra) {
 let copying = null;
 function copied() {
   return copying ? copying.catch(() => {}) : Promise.resolve();
-}
-
-function copyImage() {
-  const p = copyImageNow();
-  copying = p;
-  p.finally(() => copying === p && (copying = null)).catch(() => {});
-  return p;
 }
 
 async function copyImageNow() {
@@ -2132,6 +2261,7 @@ function closeBoxMenu() {
 async function enterArmed({ auto = false } = {}) {
   app.gen++;
   app.kind = 'record';
+  app.shotStale = true; // (the page shows live in your area from now on: it may change)
   setState('armed');
   hideAll();
   showFrozen(true);
@@ -2226,7 +2356,13 @@ async function startRecording() {
     return;
   }
   app.stream = stream;
-  if (stream.getAudioTracks().length) await startPlayback();
+  if (stream.getAudioTracks().length) await startPlayback(false, current);
+  if (!current()) {
+    // Called off meanwhile (that let go of the tab and its sound): nothing is left running.
+    for (const t of stream.getTracks()) t.stop();
+    if (app.stream === stream) releaseStream();
+    return;
+  }
   const rec = new Recorder(stream, {
     cropCss: app.region,
     viewCss: { w: innerWidth, h: innerHeight },
@@ -2305,10 +2441,20 @@ function releaseStream() {
 
 // Capturing a tab mutes it for you. Send its sound to a hidden extension page that plays it
 // (outside the tab, so it isn't captured again).
-async function startPlayback(quiet = false) {
+async function startPlayback(quiet = false, wanted = () => !!app.stream) {
   try {
     const r = await send({ type: 'snip:audioOn' });
     if (!r || r.error) throw new Error((r && r.error) || 'no player');
+    if (!wanted()) {
+      // (No longer wanted by the time the sound page was ready: it's let go again.)
+      if (!app.player) send({ type: 'snip:audioOff' }).catch(() => {});
+      return;
+    }
+    if (app.player) {
+      try {
+        app.player.disconnect();
+      } catch {}
+    }
     const p = chrome.runtime.connect({ name: 'snip-audio' });
     app.player = p;
     p.onDisconnect.addListener(() => {
@@ -2516,6 +2662,18 @@ function close({ withChat = false } = {}) {
   else send({ type: 'snip:closed', token: TOKEN, closeChat: withChat }).catch(() => {});
 }
 
+// Esc is ✕ (the bar and the chat close), except while a video is being made: then it stops the
+// recording (or calls off the countdown), and while the video is being finished it waits. So one Esc
+// (meant for the page, say, while recording) never throws a recording away: it stops, and the video is
+// there to save.
+function escapeKey() {
+  const st = app.state;
+  if (st === 'countdown') return cancelCountdown();
+  if (st === 'recording') return stopRecording('esc');
+  if (st === 'stopping' || st === 'exporting') return;
+  return requestClose();
+}
+
 // Close (✕, Esc, the icon) closes the bar and the chat with it, at once, whatever you were making.
 // When the chat itself was closed (its ×, Chrome's side panel button), the bar goes with it.
 function requestClose({ chatClosed = false } = {}) {
@@ -2529,9 +2687,10 @@ function requestClose({ chatClosed = false } = {}) {
 // video from the bar on the page, and backs out of the dark screen.
 function onToggle(mode) {
   const st = app.state;
-  // The chat closed: the bar goes too, but never in the middle of a recording or making a video (that
-  // would be lost); close it yourself then.
-  if (mode === 'chat-closed' && ['countdown', 'recording', 'stopping', 'exporting'].includes(st)) return;
+  // The chat closed: the bar goes too, but never in the middle of a recording, a video not yet saved,
+  // or a picture you've started on in another tab (that would be lost); close it yourself then.
+  if (mode === 'chat-closed' && ['countdown', 'recording', 'stopping', 'exporting', 'review'].includes(st)) return;
+  if (mode === 'chat-closed' && document.hidden && st === 'compose' && (app.hasCaption || app.highlights.length || (app.editing && editorText().trim()))) return;
   if (mode === 'chat-closed') return requestClose({ chatClosed: true });
   if (mode === 'bar') return requestClose();
   if (st === 'recording') return stopRecording('toggle');
@@ -2786,8 +2945,13 @@ async function snipText() {
   const note = app.hasCaption && app.layout ? app.layout.text || '' : '';
   let words = '';
   try {
-    const r = await Promise.race([page('words', { rect: app.region }), sleep(800).then(() => '')]);
-    words = typeof r === 'string' ? r : '';
+    // The words as pictured; if the page didn't give them then, as it is now.
+    const list = app.shotWords ? await Promise.race([app.shotWords, sleep(1500).then(() => null)]) : null;
+    if (Array.isArray(list)) words = joinWords(list, app.region);
+    else {
+      const r = await Promise.race([page('words', { rect: app.region }), sleep(800).then(() => '')]);
+      words = typeof r === 'string' ? r : '';
+    }
   } catch {}
   return { words, note };
 }
@@ -2827,10 +2991,24 @@ function handToChat(post) {
     again = setInterval(() => answered || bc.postMessage(msg), 600);
     watch = setInterval(() => {
       quiet++;
-      if (!answered && quiet >= 20) done(new Error('The chat didn’t open. Open it with the Annotated.com icon and try again.'));
-      else if (answered && quiet >= 120) done(new Error('The chat stopped answering.'));
+      if (!answered && quiet >= 20) {
+        // (Not the icon: that closes the bar, and what you made with it.)
+        clearInterval(watch);
+        clearInterval(again);
+        chatShortcut().then((k) => done(new Error(k ? `The chat didn’t open. Press ${k} to open it, then send again.` : 'The chat didn’t open. Open it from Chrome’s side panel, then send again.')));
+      } else if (answered && quiet >= 120) done(new Error('The chat stopped answering.'));
     }, 1000);
   });
+}
+
+// The chat's own shortcut (Alt+Shift+L, unless you changed it or Chrome gave it to something else).
+async function chatShortcut() {
+  try {
+    const c = (await chrome.commands.getAll()).find((x) => x.name === 'open-annotations');
+    return (c && c.shortcut) || '';
+  } catch {
+    return '';
+  }
 }
 
 // Opens the chat in Chrome's side panel if it isn't open, right in the click (Chrome only lets the
@@ -2911,7 +3089,18 @@ function wireUi() {
   });
   el.liveCap.addEventListener('click', () => openEditor(app.caption));
 
-  el.editor.addEventListener('input', () => {
+  // Ctrl+Z in the typing line undoes whatever you did last: your typing (the line's own undo), or a
+  // highlight you've made since you typed.
+  el.editor.addEventListener('beforeinput', (e) => {
+    if (/^history/.test(e.inputType || '')) return;
+    const last = app.edits[app.edits.length - 1];
+    if (!last || last === 'h') app.edits.push({ from: el.editor.value });
+  });
+  el.editor.addEventListener('input', (e) => {
+    if (e.inputType === 'historyUndo') {
+      const last = app.edits[app.edits.length - 1];
+      if (last && last !== 'h' && el.editor.value === last.from) app.edits.pop(); // that typing is all undone
+    }
     autosize();
     updateCounter();
     updateCaret(true);
@@ -2933,7 +3122,13 @@ function wireUi() {
     // Copy with nothing selected in the text: copy the picture (like the Copy button).
     if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'c' && el.editor.selectionStart === el.editor.selectionEnd && ['compose', 'review'].includes(app.state)) {
       e.preventDefault();
-      copy();
+      if (!e.repeat) copy();
+      return;
+    }
+    // Undo: a highlight you've made since you last typed goes first (then your typing, the line's own).
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'z' && ['compose', 'review'].includes(app.state) && app.edits[app.edits.length - 1] === 'h' && app.highlights.length) {
+      e.preventDefault();
+      undoHighlight();
       return;
     }
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -2950,7 +3145,7 @@ function wireUi() {
       e.preventDefault();
       e.stopPropagation();
       if (!el.inks.hidden) return closeInks();
-      requestClose();
+      if (!e.repeat) escapeKey();
     }
   });
   el.editor.addEventListener('blur', () => el.caret.classList.add('off'));
@@ -2984,6 +3179,7 @@ function wireUi() {
   window.addEventListener('resize', onResize);
   // Right-click the box (your picture or video) to save, copy or send it; nowhere else has a menu.
   document.addEventListener('contextmenu', (e) => {
+    if (e.target === el.editor) return closeBoxMenu(); // (the typing line's own menu: paste, spelling)
     e.preventDefault();
     const onBox = e.target.closest && e.target.closest('#card');
     if (onBox && ['compose', 'review'].includes(app.state) && !app.adjust) openBoxMenu(e.clientX, e.clientY);
@@ -3121,7 +3317,7 @@ function onKeyDown(e) {
     e.preventDefault();
     if (!el.boxMenu.hidden) return closeBoxMenu();
     if (!el.inks.hidden) return closeInks({ back: el.inks.contains(e.target) });
-    return requestClose();
+    return e.repeat ? undefined : escapeKey();
   }
   const st = app.state;
   if (st !== 'idle' && ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(k) && !isPrintable(e)) e.preventDefault();
@@ -3140,7 +3336,7 @@ function onKeyDown(e) {
     }
     if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === 'c') {
       e.preventDefault();
-      return copy();
+      return e.repeat ? undefined : copy();
     }
   }
   if (['compose', 'review', 'armed', 'countdown', 'recording'].includes(st) && isPrintable(e)) {
@@ -3167,24 +3363,17 @@ function onResize() {
   if (app.state === 'select') {
     // The frozen picture no longer matches the window (resize, zoom, DevTools): take a new one.
     clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(async () => {
-      if (app.state !== 'select') return;
-      el.sel.hidden = true;
-      app.hover = null;
-      try {
-        if (app.shot) await refreshShot();
-      } catch {}
-      try {
-        app.info = await page('info', { uiWidth: innerWidth });
-      } catch {}
-      showFrozen(true);
+    resizeTimer = setTimeout(() => {
+      if (app.state !== 'select' || !app.shot) return;
+      app.shotStale = true;
+      retakeForSelect();
     }, 450);
     return;
   }
   if (app.state === 'recording') return stopRecording('resize');
   if (app.state === 'armed' || app.state === 'countdown') {
     if (app.state === 'countdown') cancelCountdown();
-    enterSelect();
+    enterSelect({ fresh: true });
     return ping('resize', { ms: 2000 });
   }
   relayout();

@@ -193,6 +193,8 @@ export function countX(text) {
   const nfc = raw.normalize('NFC');
   const t = tally(nfc);
   // Back to the text as typed the way X does it: shift by the length change from normalizing.
-  const fitEnd = Math.max(0, Math.min(raw.length, t.fitEnd + raw.length - nfc.length));
+  let fitEnd = Math.max(0, Math.min(raw.length, t.fitEnd + raw.length - nfc.length));
+  // (Never between the two halves of one character, an emoji say.)
+  if (fitEnd > 0 && fitEnd < raw.length && /[\uD800-\uDBFF]/.test(raw[fitEnd - 1]) && /[\uDC00-\uDFFF]/.test(raw[fitEnd])) fitEnd--;
   return { length: t.weighted, left: X_POST_LIMIT - t.weighted, over: t.weighted > X_POST_LIMIT, fitEnd };
 }

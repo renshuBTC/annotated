@@ -149,6 +149,20 @@ export function layoutCaption({ text, source, width }) {
   const besideW = inner - creditW - gapW;
   const beside = besideW >= Math.max(90, inner * 0.38);
   const srcLines = footer ? wrap(ctx, source, beside ? besideW : inner, true) : [];
+  // On its own row, on a snip too thin for it, the credit is made smaller to fit. (Measured again at
+  // the smaller size: small text isn't exactly narrower in proportion.)
+  let fitK = 1;
+  let creditFont = srcFont;
+  if (!beside && creditW > inner) {
+    let w = creditW;
+    for (let i = 0; i < 4 && w > inner; i++) {
+      fitK *= inner / w;
+      creditFont = captionFont(m.srcSize * fitK, 500);
+      ctx.font = creditFont;
+      w = (logoSize + logoGap) * fitK + ctx.measureText(CREDIT).width;
+    }
+    ctx.font = srcFont;
+  }
 
   const cb = fontBox(ctx, capFont);
   const sb = fontBox(ctx, srcFont);
@@ -173,9 +187,9 @@ export function layoutCaption({ text, source, width }) {
     // Beside the link: at the right end of its first row. Stacked (thin snips): its own row, left.
     const row = beside ? y : y + srcLines.length * m.srcLineH; // the top of the credit's row
     const lx = beside ? inner - creditText - logoGap - logoSize : 0;
-    placed.push({ logo: true, x: lx, y: row + base - logoSize, size: logoSize }); // its base on the baseline
+    placed.push({ logo: true, x: lx, y: row + base - logoSize * fitK, size: logoSize * fitK }); // its base on the baseline
     if (beside) placed.push({ t: CREDIT, x: inner, align: 'right', y: row + base, font: srcFont, color: colors.fg });
-    else placed.push({ t: CREDIT, x: logoSize + logoGap, y: row + base, font: srcFont, color: colors.fg });
+    else placed.push({ t: CREDIT, x: (logoSize + logoGap) * fitK, y: row + base, font: creditFont, color: colors.fg });
     y += (srcLines.length + (beside ? 0 : 1)) * m.srcLineH;
   }
   y += m.padBottom;

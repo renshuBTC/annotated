@@ -59,7 +59,10 @@ chrome.sidePanel.onClosed?.addListener(async (info) => {
   }
 });
 
-chrome.tabs.onRemoved.addListener((tabId) => barTabs.delete(tabId));
+chrome.tabs.onRemoved.addListener((tabId) => {
+  barTabs.delete(tabId);
+  if (audioTabs.has(tabId)) audioOff(tabId);
+});
 chrome.tabs.onUpdated.addListener((tabId, info) => {
   if (info.status === 'loading') barTabs.delete(tabId); // a new page: the overlay went with the old one
 });
@@ -224,6 +227,16 @@ async function showBlocked(tab, why, detail) {
   }
 }
 
+// A tab's sound no longer played back (its recording ended, its bar closed, the tab went): the hidden
+// player closes when no tab needs it.
+async function audioOff(tabId) {
+  audioTabs.delete(tabId);
+  if (audioTabs.size) return;
+  try {
+    if (chrome.offscreen && (await chrome.offscreen.hasDocument())) await chrome.offscreen.closeDocument();
+  } catch {}
+}
+
 async function ensurePlayer() {
   // Chrome closes an audio page after ~30 s of silence, so check every time.
   if (!playerReady) {
@@ -307,12 +320,7 @@ async function handle(msg, sender) {
       return { ok: true };
     }
     case 'snip:audioOff': {
-      audioTabs.delete(tabId);
-      if (!audioTabs.size) {
-        try {
-          if (chrome.offscreen && (await chrome.offscreen.hasDocument())) await chrome.offscreen.closeDocument();
-        } catch {}
-      }
+      await audioOff(tabId);
       return { ok: true };
     }
     case 'snip:recording': {
@@ -323,6 +331,7 @@ async function handle(msg, sender) {
     case 'snip:closed': {
       if (msg.token) sessions.delete(msg.token);
       barTabs.delete(tabId);
+      if (audioTabs.has(tabId)) audioOff(tabId); // (the bar went while its sound was being played back)
       if (msg.closeChat && sender.tab) closeChat(sender.tab.windowId); // closed with the icon: the chat goes too
       await chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {});
       return { ok: true };
