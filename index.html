@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Annotated.com</title>
+<meta name="description" content="Snip or record part of any page, annotate it, and share it with its source.">
+<meta property="og:title" content="Annotated.com">
+<meta property="og:description" content="Snip or record part of any page, annotate it, and share it with its source.">
+<meta property="og:image" content="https://i.ytimg.com/vi/HU46rwBL-Ig/hqdefault.jpg">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="icon" href="icon-128.png" type="image/png" sizes="128x128">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@72,600&family=Inter:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #1f1f1f;
+    --blue: #0b57d0;
+    --blue-hover: #0842a0;
+    --page: #ffffff;
+    --frame: #0f0f0f;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--page); color: var(--ink); }
+  body {
+    font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  main {
+    max-width: 1072px;
+    margin: 0 auto;
+    padding: 56px 16px 72px;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    min-width: 0;
+  }
+  .brand img {
+    width: 60px;
+    height: 60px;
+    display: block;
+    flex: none;
+  }
+  .brand h1 {
+    margin: 0;
+    font-family: Newsreader, Georgia, "Times New Roman", serif;
+    font-weight: 600;
+    font-size: 40px;
+    line-height: 1.1;
+    letter-spacing: -0.01em;
+  }
+  .add {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 40px;
+    padding: 0 24px;
+    border-radius: 999px;
+    background: var(--blue);
+    color: #fff;
+    font-weight: 600;
+    font-size: 14px;
+    letter-spacing: 0.01em;
+    text-decoration: none;
+    transition: background-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .add:hover { background: var(--blue-hover); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); }
+  .add:focus-visible { outline: 3px solid #a8c7fa; outline-offset: 2px; }
+  .video {
+    margin-top: 40px;
+    position: relative;
+    aspect-ratio: 16 / 9;
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--frame);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12), 0 8px 28px rgba(0, 0, 0, 0.12);
+  }
+  .video iframe {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+  }
+  @media (max-width: 560px) {
+    main { padding-top: 32px; }
+    .brand img { width: 48px; height: 48px; }
+    .brand h1 { font-size: 32px; }
+    .add { width: 100%; height: 44px; }
+    .video { margin-top: 28px; border-radius: 10px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .add { transition: none; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="brand">
+      <img src="icon.svg" alt="" width="60" height="60">
+      <h1>Annotated.com</h1>
+    </div>
+    <a class="add" href="Annotated.com.zip" download title="Downloads the extension. Unzip it, open chrome://extensions, turn on Developer mode, and choose Load unpacked.">Add to Chrome</a>
+  </header>
+  <div class="video">
+    <iframe src="https://www.youtube-nocookie.com/embed/HU46rwBL-Ig?rel=0" title="Annotated.com demo" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+  </div>
+</main>
+</body>
+</html>
