@@ -48,7 +48,9 @@ export function captionMetrics(width) {
     srcSize,
     lineH: Math.round(size * 1.3),
     srcLineH: Math.round(srcSize * 1.45),
-    gap: Math.round(size * 0.38),
+    // From the annotation's last baseline to the top of the link-and-logo row: half the annotation's text
+    // size, so the row reads as part of the annotation (nearer to it than to the box's edges).
+    gap: Math.round(size * 0.5),
     padTop: Math.round(pad * 0.8),
     padBottom: Math.round(pad * 0.85),
   };
@@ -152,13 +154,21 @@ export function layoutCaption({ text, source, width }) {
   const sb = fontBox(ctx, srcFont);
   let y = m.padTop;
   const placed = [];
+  let lastBase = null;
   for (const t of lines) {
-    placed.push({ t, x: 0, y: y + (m.lineH - (cb.asc + cb.desc)) / 2 + cb.asc, font: capFont, color: colors.fg });
+    lastBase = y + (m.lineH - (cb.asc + cb.desc)) / 2 + cb.asc;
+    placed.push({ t, x: 0, y: lastBase, font: capFont, color: colors.fg });
     y += m.lineH;
   }
-  if (lines.length && footer) y += m.gap;
   if (footer) {
     const base = (m.srcLineH - (sb.asc + sb.desc)) / 2 + sb.asc;
+    // The row goes right under the annotation: its tallest mark (the logo, or the link's tall letters when
+    // the logo is on a row of its own) starts `gap` below the annotation's last baseline.
+    if (lastBase != null) {
+      ctx.font = srcFont;
+      const tall = ctx.measureText('Hhdl/').actualBoundingBoxAscent || m.srcSize * 0.72;
+      y = lastBase + m.gap + (beside ? Math.max(logoSize, tall) : tall) - base;
+    }
     srcLines.forEach((t, i) => placed.push({ t, x: 0, y: y + i * m.srcLineH + base, font: srcFont, color: colors.fg }));
     // Beside the link: at the right end of its first row. Stacked (thin snips): its own row, left.
     const row = beside ? y : y + srcLines.length * m.srcLineH; // the top of the credit's row

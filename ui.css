@@ -113,6 +113,8 @@ body.shape-window.st-select { cursor: default; }
   transition: transform 0.34s var(--settle);
 }
 #card.instant { transition: none; }
+/* Sent: on its way to the chat (the dashed edge was only for choosing it). */
+#card.leaving { outline-color: transparent; transition: none; }
 #card .pic { position: relative; }
 #card .media { position: relative; overflow: hidden; background: #000; }
 /* Highlights: in the highlighter's colour (exporter.js INKS), inked into the picture so text stays

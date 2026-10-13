@@ -418,6 +418,9 @@
         case 'source':
           result = bestSource(m.rect, m);
           break;
+        case 'words':
+          result = wordsIn(m.rect);
+          break;
         case 'hole':
           ui.hole = m.rect || null;
           ui.keep = Array.isArray(m.keep) ? m.keep : [];
@@ -666,6 +669,89 @@
     }
     const { strong, ...hit } = chain[d];
     return { ...hit, depth: d, max: chain.length - 1 };
+  }
+
+  /* ---------- the words a snip shows (for Ask AI in the chat) ---------- */
+  // The page's text that you can see inside `rect` (the overlay's units), in the page's order: each word
+  // whose middle is inside the box; a new line where a new block of text starts (a paragraph, a heading, a
+  // list item...), a space where a line just wraps. Our own overlay, hidden text, form fields and other
+  // frames are left out; open shadow roots are read too. At most `max` letters.
+  const NO_WORDS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'TEXTAREA', 'SELECT', 'OPTION', 'IFRAME', 'SVG', 'svg', 'CANVAS', 'VIDEO', 'AUDIO']);
+  function wordsIn(rect, max = 4000) {
+    if (!rect) return '';
+    const k = ui ? ui.scale : 1;
+    const L = rect.x * k;
+    const T = rect.y * k;
+    const R = (rect.x + rect.w) * k;
+    const B = (rect.y + rect.h) * k;
+    const range = document.createRange();
+    const seenVis = new Map(); // element -> can you see its text?
+    const visible = (elem) => {
+      let v = seenVis.get(elem);
+      if (v === undefined) {
+        v = elem.checkVisibility ? elem.checkVisibility({ opacityProperty: true, visibilityProperty: true, checkOpacity: true, checkVisibilityCSS: true }) : true;
+        seenVis.set(elem, v);
+      }
+      return v;
+    };
+    const blocks = new Map(); // element -> the block of text it's in
+    const blockOf = (elem) => {
+      let b = blocks.get(elem);
+      if (b === undefined) {
+        const d = getComputedStyle(elem).display;
+        const host = elem.parentElement || (elem.getRootNode && elem.getRootNode().host);
+        b = !host || !/^(inline|contents|ruby)/.test(d) ? elem : blockOf(host);
+        blocks.set(elem, b);
+      }
+      return b;
+    };
+    let out = '';
+    let last = null; // the last word taken: its box, its block, and whether a space followed it
+    let budget = 60000; // nodes looked at, at most
+    const take = (n) => {
+      const p = n.parentElement;
+      if (!p || !visible(p)) return;
+      const pr = p.getBoundingClientRect();
+      if (pr.right < L || pr.left > R || pr.bottom < T || pr.top > B) return;
+      const block = blockOf(p);
+      const re = /\S+/g;
+      let m;
+      while ((m = re.exec(n.data)) && out.length < max) {
+        range.setStart(n, m.index);
+        range.setEnd(n, m.index + m[0].length);
+        const b = range.getClientRects()[0];
+        if (!b || b.width < 1) continue;
+        const cx = b.left + b.width / 2;
+        const cy = b.top + b.height / 2;
+        if (cx < L || cx > R || cy < T || cy > B) continue;
+        const end = m.index + m[0].length;
+        if (last) {
+          // a new line for a new block lower down; a space where the page has one (a link's words and the
+          // comma right after it stay together)
+          if (block !== last.block && cy > last.box.bottom - 1) out += '\n';
+          else if (last.spaceAfter || m.index > 0 || block !== last.block) out += ' ';
+        }
+        out += m[0];
+        last = { box: b, block, spaceAfter: end < n.data.length };
+      }
+    };
+    const walk = (root) => {
+      const w = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+        acceptNode: (n) =>
+          n.nodeType === Node.ELEMENT_NODE && (NO_WORDS.has(n.tagName) || (ui && n === ui.host)) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+      });
+      for (let n = w.nextNode(); n && out.length < max && --budget > 0; n = w.nextNode()) {
+        if (n.nodeType === Node.TEXT_NODE) {
+          if (n.data.trim()) take(n);
+        } else if (n.shadowRoot) {
+          walk(n.shadowRoot);
+        }
+      }
+    };
+    try {
+      if (document.body) walk(document.body);
+    } catch {}
+    return out.replace(/[ \t]+\n/g, '\n').trim().slice(0, max);
   }
 
   /* ---------- highlighting text in your snip, like selecting it ---------- */

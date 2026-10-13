@@ -24,6 +24,8 @@
   <symbol id="i-flag" viewBox="0 0 16 16"><path d="M3.6 14.2V2.4M3.6 2.9c1.5-.9 3-.9 4.4 0s2.9.9 4.4 0v6.3c-1.5.9-3 .9-4.4 0s-2.9-.9-4.4 0"/></symbol>
   <symbol id="i-copy" viewBox="0 0 16 16"><rect x="5.7" y="5.7" width="7.5" height="7.5" rx="1.6"/><path d="M10.3 5.7V4.3c0-.8-.6-1.4-1.4-1.4H4.3c-.8 0-1.4.6-1.4 1.4v4.6c0 .8.6 1.4 1.4 1.4h1.4"/></symbol>
   <symbol id="i-save" viewBox="0 0 16 16"><path d="M8 2.6v7.8M4.8 7.3L8 10.5l3.2-3.2M3.2 13.4h9.6"/></symbol>
+  <!-- Ask AI: a spark. -->
+  <symbol id="i-ai" viewBox="0 0 16 16"><path d="M7 2.6l1.2 3.3 3.3 1.2-3.3 1.2L7 11.6 5.8 8.3 2.5 7.1l3.3-1.2zM12.2 10.4l.55 1.45 1.45.55-1.45.55-.55 1.45-.55-1.45-1.45-.55 1.45-.55z"/></symbol>
   <symbol id="i-link" viewBox="0 0 16 16"><path d="M6.9 9.1a2.6 2.6 0 003.7 0l2.2-2.2a2.6 2.6 0 00-3.7-3.7l-.9.9"/><path d="M9.1 6.9a2.6 2.6 0 00-3.7 0L3.2 9.1a2.6 2.6 0 003.7 3.7l.9-.9"/></symbol>
   <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7.1" cy="7.1" r="4.4"/><path d="M10.4 10.4l3.2 3.2"/></symbol>
   <symbol id="i-pic" viewBox="0 0 16 16"><rect x="2.4" y="3.2" width="11.2" height="9.6" rx="1.8"/><circle cx="6" cy="6.6" r="1.1"/><path d="M2.6 11.2l3.2-3 2.6 2.4 1.7-1.5 3.3 3"/></symbol>
@@ -48,8 +50,8 @@
 <button id="newer" class="newer" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-down"/></svg><span>New posts</span></button>
 
 <!-- Right-click a post (or press the menu key on it): reply, delete (your own), like, download (a
-     picture or video), copy it, on an annotation made with Annotated.com go to its source (a new tab), and
-     file a claim (someone else's post). -->
+     picture or video), copy it, on an annotation made with Annotated.com go to its source (a new tab), on
+     an annotation picture ask Chrome's AI about it, and file a claim (someone else's post). -->
 <div id="menu" class="menu" role="menu" aria-label="Post" tabindex="-1" hidden>
   <button type="button" role="menuitem" data-act="reply"><svg class="i" aria-hidden="true"><use href="#i-reply"/></svg><span>Reply</span></button>
   <button type="button" role="menuitem" data-act="delete"><svg class="i" aria-hidden="true"><use href="#i-trash"/></svg><span class="lbl">Delete</span></button>
@@ -57,24 +59,45 @@
   <button type="button" role="menuitem" data-act="download"><svg class="i" aria-hidden="true"><use href="#i-save"/></svg><span>Download</span></button>
   <button type="button" role="menuitem" data-act="copy"><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg><span class="lbl">Copy image</span></button>
   <button type="button" role="menuitem" data-act="source"><svg class="i" aria-hidden="true"><use href="#i-link"/></svg><span>Go to source link</span></button>
+  <button type="button" role="menuitem" data-act="ask"><svg class="i" aria-hidden="true"><use href="#i-ai"/></svg><span>Ask AI</span></button>
   <button type="button" role="menuitem" data-act="claim"><svg class="i" aria-hidden="true"><use href="#i-flag"/></svg><span>File a claim</span></button>
 </div>
 
-<!-- File a claim: for someone whose work a post uses beyond fair use. It goes privately to the people
-     who run this chat (the claims table in its Supabase project), not to the poster. -->
+<!-- File a claim: for someone whose work a post uses beyond fair use. One box: what's yours, with your email
+     in it. It goes privately to the people who run this chat (the claims table in its Supabase project), not
+     to the poster. -->
 <dialog id="claim" class="claim" aria-labelledby="claimTitle" aria-describedby="claimNote">
   <form id="claimForm" novalidate>
     <h2 id="claimTitle">File a claim</h2>
-    <p id="claimNote" class="note">Is this your work, used beyond fair use? Say what's yours and how to reach you. Your claim goes to the people who run this chat, not to the poster.</p>
-    <label for="claimWhat">What's yours, and why this isn't fair use</label>
-    <textarea id="claimWhat" rows="4" maxlength="2000"></textarea>
-    <label for="claimWho">How to reach you (an email or an X handle)</label>
-    <input id="claimWho" type="text" maxlength="200" autocomplete="email" spellcheck="false">
-    <label class="check"><input id="claimOk" type="checkbox"><span>I own this work or act for its owner, and what I've said is true.</span></label>
+    <p id="claimNote" class="note">Your work, used beyond fair use? Say what’s yours and add your email. Only the people who run this chat see it, and sending it confirms it’s your work or you act for its owner.</p>
+    <textarea id="claimWhat" rows="4" maxlength="2000" aria-labelledby="claimTitle" aria-describedby="claimNote"></textarea>
     <p id="claimErr" class="err" role="alert" hidden></p>
     <div class="actions">
       <button type="button" id="claimCancel" class="ghost">Cancel</button>
       <button type="submit" id="claimSend" class="primary">Send claim</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Ask AI: Chrome's own AI model, on this computer (nothing is sent anywhere), checks an annotation: the
+     words in its snip, and what its poster wrote about them. -->
+<dialog id="ask" class="claim ask" aria-labelledby="askTitle">
+  <form method="dialog">
+    <h2 id="askTitle">Ask AI</h2>
+    <section aria-labelledby="askWordsH">
+      <h3 id="askWordsH">The words in the box</h3>
+      <blockquote id="askWordsQ" class="q" hidden></blockquote>
+      <p id="askWords" class="ai"></p>
+    </section>
+    <section aria-labelledby="askTakeH">
+      <h3 id="askTakeH">What they wrote</h3>
+      <blockquote id="askTakeQ" class="q" hidden></blockquote>
+      <p id="askTake" class="ai"></p>
+    </section>
+    <p id="askStatus" class="status" role="status" aria-live="polite"></p>
+    <div class="actions">
+      <button type="button" id="askGet" class="ghost" hidden>Download the AI model</button>
+      <button type="submit" id="askClose" class="primary">Close</button>
     </div>
   </form>
 </dialog>

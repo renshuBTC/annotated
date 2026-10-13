@@ -1,7 +1,8 @@
 // Annotated.com: the chat, in Chrome's side panel. Everyone with the extension shares one room: write,
 // or paste/drop an annotation picture or video (or send it from the bar's Annotated.com button), and
 // everyone sees it live, in threads (each reply right under the post it answers). Right-click a post to
-// reply, delete it (yours), like it, download it, or copy the source link of an annotation. Search the
+// reply, delete it (yours), like it, download it, copy the source link of an annotation, or ask Chrome's
+// built-in AI what it makes of an annotation (Ask AI, on this computer). Search the
 // whole chat from the box. Posts live in Supabase (see supabase/setup.sql): anyone can read, you post
 // as yourself (an anonymous sign-in kept in this Chrome profile), and you can delete only yours.
 // (Signing in with X is switched off for now.)
@@ -37,11 +38,18 @@ const el = {
   claim: $('#claim'),
   claimForm: $('#claimForm'),
   claimWhat: $('#claimWhat'),
-  claimWho: $('#claimWho'),
-  claimOk: $('#claimOk'),
   claimErr: $('#claimErr'),
   claimSend: $('#claimSend'),
   claimCancel: $('#claimCancel'),
+  ask: $('#ask'),
+  askWordsQ: $('#askWordsQ'),
+  askWords: $('#askWords'),
+  askTakeH: $('#askTakeH'),
+  askTakeQ: $('#askTakeQ'),
+  askTake: $('#askTake'),
+  askStatus: $('#askStatus'),
+  askGet: $('#askGet'),
+  askClose: $('#askClose'),
   banner: $('#banner'),
   bannerText: $('#bannerText'),
   bannerBtn: $('#bannerBtn'),
@@ -429,9 +437,14 @@ function sizeBox(box, w, h) {
   return true;
 }
 
+// Pictures and videos you've just posted from here are shown from your own copy, at once (no download), so
+// a post sent from the bar lands in the chat whole.
+const localMedia = new Map(); // its place in storage → a blob: URL of your copy
+
 function makeMedia(p) {
   if (!PATH_OK.test(p.media_path || '')) return node('div', 'media missing', 'This attachment can’t be shown.');
   const url = publicUrl(p.media_path);
+  const src = localMedia.get(p.media_path) || url;
   const gone = (box) => {
     box.replaceWith(node('div', 'media missing', p.media_type === 'video' ? 'This video is no longer available.' : 'This picture is no longer available.'));
   };
@@ -441,7 +454,7 @@ function makeMedia(p) {
     v.controls = true;
     v.preload = 'metadata';
     v.playsInline = true;
-    v.src = url;
+    v.src = src;
     if (sizeBox(box, p.media_width, p.media_height)) {
       v.style.width = '100%';
       v.style.height = '100%';
@@ -454,12 +467,21 @@ function makeMedia(p) {
   a.href = url;
   a.target = '_blank';
   a.rel = 'noopener noreferrer';
-  a.title = 'Open full size';
+  a.title = viewer.postId === p.id ? 'Close the full-size tab' : 'Open full size';
+  a.dataset.view = p.id;
+  if (viewer.postId === p.id) a.classList.add('viewing');
+  // A press opens it full size in a tab of its own; pressing it again closes that tab (see toggleViewer).
+  // Ctrl/⌘/Shift-click and middle-click open it the usual way.
+  a.addEventListener('click', (e) => {
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    toggleViewer(p);
+  });
   const img = document.createElement('img');
   img.alt = p.body ? '' : `Picture posted by ${displayName(p)}`;
   img.decoding = 'async';
   img.loading = 'lazy';
-  img.src = url;
+  img.src = src;
   if (sizeBox(a, p.media_width, p.media_height)) {
     a.style.display = 'block';
     img.style.width = '100%';
@@ -470,6 +492,60 @@ function makeMedia(p) {
   return a;
 }
 
+
+// Pictures open full size in a tab of their own (view.html: the picture, with who posted it, when, and how
+// many have seen it on its top left, as on its card), one at a time. Press a picture: it opens in a new tab right
+// after the page you're on. Press the same picture again: that tab closes, and you're back on the page.
+// Press another: the open one's tab closes and the new one opens. (Closing the tab yourself is fine too.)
+const viewer = { tabId: null, postId: null, busy: false };
+
+function markViewing() {
+  for (const a of document.querySelectorAll('a.media[data-view]')) {
+    const on = a.dataset.view === viewer.postId;
+    a.classList.toggle('viewing', on);
+    a.title = on ? 'Close the full-size tab' : 'Open full size';
+  }
+}
+
+async function toggleViewer(p) {
+  if (viewer.busy || !PATH_OK.test(p.media_path || '')) return;
+  viewer.busy = true;
+  try {
+    const same = viewer.postId === p.id && viewer.tabId != null;
+    const open = viewer.tabId;
+    viewer.tabId = null;
+    viewer.postId = null;
+    if (open != null) await chrome.tabs.remove(open).catch(() => {});
+    if (same) return;
+    const where = state.windowId != null ? { windowId: state.windowId } : { currentWindow: true };
+    const [page] = await chrome.tabs.query({ active: true, ...where }).catch(() => []);
+    // The picture full size with the card's label: who posted it, when, and how many have seen it.
+    // (A picture you've just posted from here comes from your own copy: it shows at once.)
+    const label = { path: p.media_path, name: p.name, handle: p.x_handle || '', photo: p.x_avatar || '', uid: p.user_id || '', at: p.created_at, views: Number.isFinite(p.views) ? p.views : null, local: localMedia.get(p.media_path) || '' };
+    const tab = await chrome.tabs.create({
+      url: chrome.runtime.getURL('view.html') + '#' + encodeURIComponent(JSON.stringify(label)),
+      active: true,
+      ...(state.windowId != null ? { windowId: state.windowId } : {}),
+      ...(page ? { index: page.index + 1, openerTabId: page.id } : {}),
+    });
+    viewer.tabId = tab.id;
+    viewer.postId = p.id;
+  } catch (e) {
+    setBanner('Couldn’t open the picture: ' + friendly(e), { ms: 5000 });
+  } finally {
+    viewer.busy = false;
+    markViewing();
+  }
+}
+
+try {
+  chrome.tabs.onRemoved.addListener((id) => {
+    if (id !== viewer.tabId) return;
+    viewer.tabId = null;
+    viewer.postId = null;
+    markViewing();
+  });
+} catch {}
 
 // The quote at the top of a reply: who, their picture or video (small), their first words. Click it
 // to go to the post it answers.
@@ -549,7 +625,6 @@ function makePost(p, { hit = null } = {}) {
   const body = node('div', 'body');
   const meta = node('div', 'meta');
   meta.append(makeName(p));
-  if (mine) meta.append(node('span', 'you', 'you'));
   const d = new Date(p.created_at);
   meta.append(makeWhen(p));
   body.append(meta);
@@ -580,7 +655,6 @@ function makeAnnotationPost(li, p, { hit, mine }) {
   const meta = node('div', 'meta');
   const who = node('span', 'who');
   who.append(makeName(p));
-  if (mine) who.append(node('span', 'you', 'you'));
   meta.append(makeAvatar(p), who, makeWhen(p));
   card.append(meta, makeMedia(p));
   const head = node('div', 'head');
@@ -721,7 +795,7 @@ function threadOrder() {
 }
 
 // Put the feed in order without rebuilding it (a playing video keeps playing).
-function render({ arrive = null } = {}) {
+function render({ arrive = null, land = false } = {}) {
   const items = threadOrder();
   const want = [];
   let prevDay = null;
@@ -738,7 +812,7 @@ function render({ arrive = null } = {}) {
     li.classList.toggle('has-kids', kids > 0);
     li.classList.toggle('orphan', depth === 0 && !!(p.reply_to || p.reply_name || p.reply_gone));
     li.style.setProperty('--depth', String(Math.min(depth, MAX_DEPTH)));
-    if (arrive && arrive.has(p.id)) li.classList.add('arrive');
+    if (arrive && arrive.has(p.id)) li.classList.add(land ? 'land' : 'arrive');
     want.push(li);
   }
   let cur = el.list.firstChild;
@@ -779,7 +853,7 @@ function redraw(id) {
   if (focused) fresh.focus({ preventScroll: true });
 }
 
-function addPosts(rows, { live = false, mine = false } = {}) {
+function addPosts(rows, { live = false, mine = false, landed = false } = {}) {
   const fresh = new Set();
   for (const p of rows) {
     if (!p || !p.id || state.posts.has(p.id)) continue;
@@ -790,7 +864,7 @@ function addPosts(rows, { live = false, mine = false } = {}) {
   }
   if (!fresh.size) return;
   const stick = mine || nearBottom();
-  render({ arrive: live || mine ? fresh : null });
+  render({ arrive: live || mine ? fresh : null, land: landed });
   if (state.search) return loadLikes([...fresh]);
   // A reply goes under the post it answers, which may be further up: yours is brought into view there;
   // someone else's leaves you where you are (with "New posts" if it's out of sight).
@@ -835,6 +909,7 @@ function dropPost(id) {
   if (state.replyTo && state.replyTo.id === id) setReply(null);
   if (menu.post && menu.post.id === id) closeMenu();
   if (claimFor && claimFor.id === id && el.claim.open) claimError('That post has just been deleted.');
+  if (ask && ask.post.id === id && el.ask.open) setAskStatus('That post has just been deleted.');
   if (state.search && state.search.rows.delete(id)) {
     const li = el.results.querySelector(`.post[data-id="${CSS.escape(id)}"]`);
     if (li) li.remove();
@@ -1313,9 +1388,10 @@ async function copyPost(p) {
   }
 }
 
-// File a claim: someone says a post uses their work beyond fair use. A short form; the claim goes
-// privately to the people who run this chat (the server keeps a copy of the post with it). One claim
-// per person per post.
+// File a claim: someone says a post uses their work beyond fair use. One box: what's theirs, with their
+// email in it (that's how they're reached). The claim goes privately to the people who run this chat (the
+// server keeps a copy of the post with it). One claim per person per post.
+const EMAIL = /[^\s@<>()[\]"',;:]+@[^\s@<>()[\]"',;:]+\.[a-z]{2,}/i;
 let claimFor = null;
 function openClaim(p) {
   claimFor = p;
@@ -1336,10 +1412,10 @@ async function sendClaim() {
   const p = claimFor;
   if (!p || el.claimSend.disabled) return;
   const reason = el.claimWhat.value.trim();
-  const contact = el.claimWho.value.trim();
-  if (reason.length < 10) return claimError('Say what’s yours and why this isn’t fair use (at least a sentence).'), el.claimWhat.focus();
-  if (contact.length < 3) return claimError('Say how to reach you.'), el.claimWho.focus();
-  if (!el.claimOk.checked) return claimError('Tick the box to confirm it’s your work (or you act for its owner).'), el.claimOk.focus();
+  const email = reason.match(EMAIL);
+  if (!email) return claimError('Add your email, so the people who run this chat can reach you.'), el.claimWhat.focus();
+  if (reason.replace(email[0], '').trim().length < 10) return claimError('Say what’s yours, in a sentence, with your email.'), el.claimWhat.focus();
+  const contact = email[0].slice(0, 200);
   el.claimErr.hidden = true;
   el.claimSend.disabled = true;
   el.claimSend.textContent = 'Sending…';
@@ -1364,6 +1440,232 @@ async function sendClaim() {
   }
 }
 
+// Ask AI: a fact check by Chrome's own AI model (Gemini Nano, on this computer: nothing about the post is
+// sent anywhere), in a window like File a claim: first the words in the snip, then what its poster wrote
+// about them, each with a verdict (True, Misleading, Opinion...) and one sentence why. The words come from the picture's file (Annotated.com writes them in when it
+// makes the picture); for an older picture without them, the model reads the picture itself, where it can.
+// It needs Chrome's built-in AI (the Prompt API): when that's missing, can't run on this computer, or still
+// has to be downloaded, the window says so (a download starts only when you press its button).
+const AI_TEXT = { expectedInputs: [{ type: 'text', languages: ['en'] }], expectedOutputs: [{ type: 'text', languages: ['en'] }] };
+const AI_IMAGE = { expectedInputs: [{ type: 'text', languages: ['en'] }, { type: 'image' }], expectedOutputs: [{ type: 'text', languages: ['en'] }] };
+const AI_SYSTEM =
+  'You fact-check annotations people share. An annotation is a snip of a web page (its words) and a short take its poster wrote about it. ' +
+  'You cannot open links or search the web, and your knowledge stops at some date: when a claim is about something you cannot know, say you cannot verify it instead of guessing. ' +
+  'Never invent facts, names, numbers or quotes. Be simple and direct: plain sentences, no labels, lists, headings or markdown.';
+// The verdicts an answer starts with (shown in bold).
+const AI_VERDICT = /^(mostly true|true|misleading|false|accurate|opinion|can[’']t verify|cannot verify|unverifiable)\b[.:!]?/i;
+const AI_WORDS_MAX = 3000; // letters of the snip's words the model is given (room left for its answer)
+const AI_MSG = {
+  missing: 'Ask AI uses Chrome’s built-in AI, which this browser doesn’t have. It needs Chrome 138 or later on Windows, macOS, Linux or a Chromebook Plus.',
+  cant: 'Chrome’s built-in AI can’t run on this computer. It needs a graphics card with more than 4 GB of memory, or 16 GB of memory and 4 processor cores, and 22 GB of free disk space.',
+  noWords: 'This annotation was posted before Annotated.com saved its words with it, and Chrome’s AI on this computer can’t read pictures.',
+  download: 'Chrome’s AI model isn’t on this computer yet. Chrome downloads it once (it’s large); after that, checks run here, even offline.',
+  getting: (k) => `Getting Chrome’s AI model ready: ${Math.round(Math.max(0, Math.min(1, k)) * 100)}%`,
+};
+const askedAi = new Map(); // post id -> { words, take }: what the AI said (this session)
+let ask = null; // the open window's run: { post, ctrl, session }
+
+const canAsk = (p) => !!p && isAnnotation(p) && p.media_type === 'image' && PATH_OK.test(p.media_path || '');
+
+function openAsk(p) {
+  stopAsk();
+  const run = { post: p, ctrl: new AbortController(), session: null };
+  ask = run;
+  const mine = !!state.uid && p.user_id === state.uid;
+  el.askTakeH.textContent = mine ? 'What you wrote' : `What ${displayName(p)} wrote`;
+  for (const q of [el.askWordsQ, el.askTakeQ]) {
+    q.textContent = '';
+    q.hidden = true;
+  }
+  setAi(el.askWords, '');
+  setAi(el.askTake, '');
+  el.askGet.hidden = true;
+  setAskStatus('Reading the annotation…');
+  el.ask.showModal();
+  el.askClose.focus();
+  runAsk(run).catch((e) => {
+    if (ask !== run || run.ctrl.signal.aborted) return;
+    el.askGet.hidden = true;
+    setAskStatus(aiTrouble(e));
+  });
+}
+
+function stopAsk() {
+  if (!ask) return;
+  ask.ctrl.abort();
+  try {
+    if (ask.session) ask.session.destroy();
+  } catch {}
+  ask = null;
+}
+
+function setAskStatus(text) {
+  el.askStatus.textContent = text || '';
+}
+
+// An answer in its place: its verdict (True, Misleading, Opinion...) in bold, then why.
+function setAi(target, text, { wait = false } = {}) {
+  const v = wait ? null : String(text).match(AI_VERDICT);
+  if (v) {
+    const b = document.createElement('strong');
+    b.textContent = v[0];
+    target.replaceChildren(b, String(text).slice(v[0].length));
+  } else {
+    target.textContent = text;
+  }
+  target.classList.toggle('wait', wait);
+}
+
+function showQuote(q, text) {
+  q.textContent = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 400);
+  q.hidden = !q.textContent;
+}
+
+// What the model says, as plain sentences: no markdown, and no label in front ("Verdict:", "Check:"...),
+// which it may add anyway.
+function tidyAi(t) {
+  return String(t || '')
+    .replace(/\*\*|__/g, '')
+    .replace(/^#+\s*/gm, '')
+    .replace(/^\s*[*-]\s+/gm, '• ')
+    .replace(/^\s*(?:(?:words?|take|note|snip|annotation|fact)[ -]?)?(?:check|verdict|assessment|analysis|answer|summary)\s*:\s*/i, '')
+    .trim()
+    .replace(/^\p{Ll}/u, (c) => c.toUpperCase());
+}
+
+async function streamAi(session, input, target, signal) {
+  let text = '';
+  setAi(target, '…', { wait: true });
+  for await (const chunk of session.promptStreaming(input, { signal })) {
+    // (Chrome sends the new words; some versions sent the whole answer so far.)
+    text = text && chunk.startsWith(text) ? chunk : text + chunk;
+    setAi(target, tidyAi(text));
+  }
+  const out = tidyAi(text) || '(No answer.)';
+  setAi(target, out);
+  return out;
+}
+
+function aiTrouble(e) {
+  const n = e && e.name;
+  if (n === 'QuotaExceededError') return 'This annotation has too many words for Chrome’s AI to read at once.';
+  if (n === 'NotSupportedError') return 'Chrome’s AI can’t read this annotation.';
+  if (n === 'NotAllowedError') return 'Chrome didn’t let its AI start. Close this and try Ask AI again.';
+  return 'Couldn’t check it: ' + friendly(e);
+}
+
+function hostOf(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+}
+
+const aiWordsPrompt = (words, host) =>
+  `Fact-check the words in this snip${host ? ` (from ${host})` : ''}:\n"""\n${words.slice(0, AI_WORDS_MAX)}\n"""\n` +
+  'Start with one verdict: True, Mostly true, Misleading, False, or Can’t verify. Then say why in one short sentence.';
+const aiTakePrompt = (note, hasWords) =>
+  `Fact-check what the poster wrote about it:\n"""\n${note}\n"""\n` +
+  `Start with one verdict: Accurate, Misleading, False, Opinion, or Can’t verify. Then say why in one short sentence${hasWords ? ', with the snip’s words as context' : ''}.`;
+const AI_IMG_WORDS =
+  'This picture is an annotation: a snip of a web page, then, under a black line, the take its poster wrote, with a link and the name Annotated.com at the bottom. ' +
+  'Fact-check the words in the snip above the line. Start with one verdict: True, Mostly true, Misleading, False, or Can’t verify. Then say why in one short sentence.';
+const AI_IMG_TAKE =
+  'Now fact-check the take under the line. Start with one verdict: Accurate, Misleading, False, Opinion, or Can’t verify. Then say why in one short sentence.';
+
+// Waits for a press of "Download the AI model" (the press is what lets Chrome start the download).
+function pressToGet(run) {
+  el.askGet.hidden = false;
+  setAskStatus(AI_MSG.download);
+  return new Promise((resolve, reject) => {
+    const go = () => {
+      el.askGet.removeEventListener('click', go);
+      el.askGet.hidden = true;
+      resolve();
+    };
+    el.askGet.addEventListener('click', go);
+    run.ctrl.signal.addEventListener(
+      'abort',
+      () => {
+        el.askGet.removeEventListener('click', go);
+        reject(new DOMException('Closed', 'AbortError'));
+      },
+      { once: true },
+    );
+  });
+}
+
+async function runAsk(run) {
+  const { post: p, ctrl } = run;
+  const { signal } = ctrl;
+  const live = () => ask === run && !signal.aborted;
+  // What the annotation says (written into its picture).
+  const r = await fetch(publicUrl(p.media_path), { signal });
+  if (!r.ok) throw new Error(r.status === 404 || r.status === 400 ? 'it isn’t there any more.' : `the server said ${r.status}.`);
+  const blob = await r.blob();
+  const { words, note } = await fileInfo(blob);
+  if (!live()) return;
+  showQuote(el.askWordsQ, words);
+  showQuote(el.askTakeQ, note);
+  const seen = askedAi.get(p.id);
+  if (seen) {
+    setAi(el.askWords, seen.words);
+    setAi(el.askTake, seen.take);
+    return setAskStatus('');
+  }
+  const api = globalThis.LanguageModel;
+  if (!api || typeof api.create !== 'function') return setAskStatus(AI_MSG.missing);
+  const byPicture = !words && !note;
+  const opts = byPicture ? AI_IMAGE : AI_TEXT;
+  const textAvail = await api.availability(AI_TEXT).catch(() => 'unavailable');
+  const avail = byPicture && textAvail !== 'unavailable' ? await api.availability(AI_IMAGE).catch(() => 'unavailable') : textAvail;
+  if (!live()) return;
+  if (textAvail === 'unavailable') return setAskStatus(AI_MSG.cant);
+  if (avail === 'unavailable') return setAskStatus(AI_MSG.noWords);
+  if (avail === 'downloadable') await pressToGet(run);
+  if (!live()) return;
+  setAskStatus(avail === 'available' ? 'Checking…' : AI_MSG.getting(0));
+  const make = () =>
+    api.create({
+      ...opts,
+      initialPrompts: [{ role: 'system', content: AI_SYSTEM }],
+      signal,
+      monitor(m) {
+        m.addEventListener('downloadprogress', (e) => live() && setAskStatus(AI_MSG.getting(e.loaded)));
+      },
+    });
+  try {
+    run.session = await make();
+  } catch (e) {
+    if (!e || e.name !== 'NotAllowedError' || avail === 'downloadable') throw e;
+    await pressToGet(run); // (Chrome wanted a press to start getting its model)
+    run.session = await make();
+  }
+  if (!live()) return;
+  setAskStatus('Checking…');
+  let said;
+  if (byPicture) {
+    said = {
+      words: await streamAi(run.session, [{ role: 'user', content: [{ type: 'text', value: AI_IMG_WORDS }, { type: 'image', value: blob }] }], el.askWords, signal),
+      take: await streamAi(run.session, AI_IMG_TAKE, el.askTake, signal),
+    };
+  } else {
+    said = {};
+    if (words) said.words = await streamAi(run.session, aiWordsPrompt(words, hostOf(p.source)), el.askWords, signal);
+    else setAi(el.askWords, (said.words = 'There are no words in this snip: it’s a picture.'));
+    if (note) said.take = await streamAi(run.session, aiTakePrompt(note, !!words), el.askTake, signal);
+    else setAi(el.askTake, (said.take = 'Nothing was written about it.'));
+  }
+  if (!live()) return;
+  askedAi.set(p.id, said);
+  setAskStatus('');
+  try {
+    run.session.destroy();
+  } catch {}
+  run.session = null;
+}
+
 // Go to source link: where an annotation is from, in a new tab (only ever a web address).
 function openSource(p) {
   if (!isWebLink(p.source)) return;
@@ -1372,8 +1674,8 @@ function openSource(p) {
 
 // The right-click menu: Reply, Delete (your own posts: press it twice), Like (or
 // Unlike), Download (a picture or video), Copy (the picture, the video or the words), and on an
-// annotation made with Annotated.com, Go to source link (opens it in a new tab), and File a claim (on
-// someone else's post). (When it was posted is on the post itself.)
+// annotation made with Annotated.com, Go to source link (opens it in a new tab), Ask AI (on a picture),
+// and File a claim (on someone else's post). (When it was posted is on the post itself.)
 const menu = { post: null, li: null, prev: null, byKeyboard: false, openedAt: 0, armTimer: 0 };
 
 function postOf(li) {
@@ -1405,6 +1707,7 @@ function openMenu(li, x, y, { keyboard = false } = {}) {
   copy.hidden = !kind;
   copy.querySelector('.lbl').textContent = kind === 'video' ? 'Copy video' : kind === 'text' ? 'Copy text' : 'Copy image';
   m.querySelector('[data-act="source"]').hidden = !(p.media_path && isWebLink(p.source));
+  m.querySelector('[data-act="ask"]').hidden = !canAsk(p);
   m.querySelector('[data-act="claim"]').hidden = !!(state.uid && p.user_id === state.uid);
   disarmDelete();
   m.hidden = false;
@@ -1470,6 +1773,11 @@ function onMenu(act) {
   if (act === 'copy') {
     closeMenu();
     return copyPost(p);
+  }
+  if (act === 'ask') {
+    if (!canAsk(p)) return;
+    closeMenu();
+    return openAsk(p);
   }
   if (act === 'claim') {
     closeMenu();
@@ -1663,39 +1971,59 @@ function videoInfo(url) {
   });
 }
 
-// Where a saved Annotated.com picture is from: it's written into the file (a PNG text chunk, or a JPEG
-// comment), so a saved snip dragged or added here still offers "Go to source link". Other files: none.
-async function sourceInFile(f) {
+// What Annotated.com wrote into a picture's file (see exporter.js): where it's from (so a saved snip dragged
+// or added here still offers "Go to source link"), and the words its snip shows with what its maker wrote
+// about them (for Ask AI). A PNG's text chunks, or a JPEG's comments; other files: none.
+async function fileInfo(f) {
+  const info = { source: '', words: '', note: '' };
   try {
     const b = new Uint8Array(await f.slice(0, 512 * 1024).arrayBuffer());
-    const dec = new TextDecoder('latin1');
-    if (f.type === 'image/png' && b[0] === 0x89 && b[1] === 0x50) {
+    const latin = new TextDecoder('latin1');
+    const utf8 = new TextDecoder();
+    const text = (json) => {
+      try {
+        const j = JSON.parse(json);
+        info.words = typeof j.words === 'string' ? j.words : '';
+        info.note = typeof j.note === 'string' ? j.note : '';
+      } catch {}
+    };
+    if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) {
       for (let i = 8; i + 8 <= b.length; ) {
         const len = ((b[i] << 24) | (b[i + 1] << 16) | (b[i + 2] << 8) | b[i + 3]) >>> 0;
-        const type = dec.decode(b.subarray(i + 4, i + 8));
-        if (type === 'IDAT' || type === 'IEND') break;
-        if (type === 'tEXt' && i + 8 + len <= b.length) {
-          const data = dec.decode(b.subarray(i + 8, i + 8 + len));
-          const nul = data.indexOf('\0');
-          if (data.slice(0, nul) === 'Source') return checkSource(data.slice(nul + 1));
+        const type = latin.decode(b.subarray(i + 4, i + 8));
+        if (type === 'IDAT' || type === 'IEND' || i + 8 + len > b.length) break;
+        const data = b.subarray(i + 8, i + 8 + len);
+        if (type === 'tEXt') {
+          const t = latin.decode(data);
+          const nul = t.indexOf('\0');
+          if (t.slice(0, nul) === 'Source') info.source = checkSource(t.slice(nul + 1));
+        } else if (type === 'iTXt') {
+          const t = utf8.decode(data);
+          const head = 'Annotated.com\0\0\0\0\0'; // keyword, not compressed, no language, no translation
+          if (t.startsWith(head)) text(t.slice(head.length));
         }
         i += 12 + len;
       }
-    } else if (f.type === 'image/jpeg' && b[0] === 0xff && b[1] === 0xd8) {
+    } else if (b[0] === 0xff && b[1] === 0xd8) {
       for (let i = 2; i + 4 <= b.length && b[i] === 0xff; ) {
         const m = b[i + 1];
         const len = (b[i + 2] << 8) | b[i + 3];
         if (m === 0xda) break; // the picture itself starts
         if (m === 0xfe) {
-          const c = new TextDecoder().decode(b.subarray(i + 4, i + 2 + len));
+          const c = utf8.decode(b.subarray(i + 4, i + 2 + len));
           const hit = c.match(/^Annotated\.com source: (\S+)$/);
-          if (hit) return checkSource(hit[1]);
+          if (hit) info.source = checkSource(hit[1]);
+          else if (c.startsWith('Annotated.com text: ')) text(c.slice('Annotated.com text: '.length));
         }
         i += 2 + len;
       }
     }
   } catch {}
-  return '';
+  return info;
+}
+async function sourceInFile(f) {
+  if (f.type !== 'image/png' && f.type !== 'image/jpeg') return '';
+  return (await fileInfo(f)).source;
 }
 function checkSource(s) {
   return isWebLink(s) ? s : '';
@@ -1781,7 +2109,7 @@ async function readClipboard() {
 }
 
 async function onPaste(e) {
-  if (e.target === el.meEdit || e.target === el.q || el.claim.open) return;
+  if (e.target === el.meEdit || e.target === el.q || el.claim.open || el.ask.open) return;
   const dt = e.clipboardData;
   const f = firstFile(dt && dt.files);
   if (f) {
@@ -1871,6 +2199,7 @@ async function send() {
     }
     const { data, error } = await sb.from('messages').insert(row).select().single();
     if (error) throw error;
+    if (att && data.media_path) localMedia.set(data.media_path, URL.createObjectURL(att.file));
     path = null;
     // (Anything typed, or another post picked to answer, while it uploaded stays.)
     if (el.text.value.trim() === body) {
@@ -1957,7 +2286,8 @@ async function postNow({ file, kind, source, width, height, seconds }, onProgres
   }
   if (state.search) closeSearch();
   refreshMine();
-  addPosts([data], { mine: true });
+  localMedia.set(data.media_path, URL.createObjectURL(file));
+  addPosts([data], { mine: true, landed: true }); // (it flew off the page to here: it comes in from the left)
   toBottom();
   return data;
 }
@@ -2173,7 +2503,7 @@ function wire() {
     if (!el.menu.hidden && !el.menu.contains(e.target)) closeMenu();
   });
   document.addEventListener('keydown', (e) => {
-    if (el.claim.open) return; // the claim form has the keys (Esc closes just it)
+    if (el.claim.open || el.ask.open) return; // the claim form (or Ask AI) has the keys (Esc closes just it)
     if (e.key === 'Escape' && !el.menu.hidden) return closeMenu();
     // Esc (when it isn't closing something in here) is the bar's ✕: the chat and the bar close.
     if (e.key === 'Escape' && !e.defaultPrevented && !e.isComposing) {
@@ -2223,7 +2553,7 @@ function wire() {
     e.preventDefault();
     depth = 0;
     el.drop.hidden = true;
-    if (!el.claim.open) attachFile(firstFile(e.dataTransfer.files));
+    if (!el.claim.open && !el.ask.open) attachFile(firstFile(e.dataTransfer.files));
   });
   el.claimForm.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -2232,6 +2562,10 @@ function wire() {
   el.claimCancel.addEventListener('click', () => el.claim.close());
   el.claim.addEventListener('close', () => {
     claimFor = null;
+    el.text.focus({ preventScroll: true });
+  });
+  el.ask.addEventListener('close', () => {
+    stopAsk();
     el.text.focus({ preventScroll: true });
   });
 

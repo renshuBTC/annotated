@@ -338,6 +338,7 @@ function showFrozen(on) {
 
 function hideAll() {
   for (const k of ['composer', 'card', 'region', 'liveCap', 'sel', 'handles']) el[k].hidden = true;
+  if (flying) flying.clear();
   el.bar.classList.remove('exporting', 'finished');
 }
 
@@ -1950,7 +1951,7 @@ async function saveImage() {
   setBusy(true);
   try {
     if (!(await ensureCommitted())) return;
-    const out = await exportImage({ shot: app.shot.bitmap, shotScale: app.shot.scale, region: app.region, layout: app.layout, highlights: app.highlights, source: app.source });
+    const out = await exportImage({ shot: app.shot.bitmap, shotScale: app.shot.scale, region: app.region, layout: app.layout, highlights: app.highlights, source: app.source, ...(await snipText()) });
     const name = fileName('Screenshot', out.ext);
     download(out.blob, name);
     el.bar.classList.add('finished');
@@ -2691,13 +2692,22 @@ async function sendToChat() {
   setBusy(true);
   syncBar();
   let sent = false;
+  let flight = null;
   try {
-    const post = video ? await videoForChat() : await pictureForChat();
-    if (post) {
-      await handToChat(post);
-      sent = true;
+    // Your text goes in first (as Enter would put it); over X's 280, it stays where you can cut it.
+    if (!(video ? await committedForVideo() : await ensureCommitted())) {
+      if (video) throw Object.assign(new Error('Your text is over 280 characters.'), { quiet: true });
+      return;
     }
+    // Then your post flies off to the chat beside the page while it's made and sent (it comes back if
+    // the chat can't take it).
+    flight = flyToChat();
+    const post = video ? await videoForChat() : await pictureForChat();
+    await handToChat(post);
+    sent = true;
+    await flight.landed;
   } catch (e) {
+    if (flight) flight.back();
     if (!e || !e.quiet) toast('Couldn’t send it to the chat: ' + ((e && e.message) || e), { ms: 6000 });
   } finally {
     sending = false;
@@ -2705,19 +2715,84 @@ async function sendToChat() {
     if (!closing) syncBar();
   }
   if (!sent || closing) return;
+  flight.end();
   ping('logo', { icon2: 'check' });
   done(gen);
 }
 
+// Send: the box, your snip with your text under it, flies off the page to the right, into the chat beside
+// it (getting about as small as a post there), as your text flies into the box on Enter; the dark screen
+// goes as it leaves. With Reduce Motion it just fades.
+let flying = null;
+function flyToChat() {
+  const card = el.card;
+  const p = app.cardPos;
+  const flight = { landed: Promise.resolve(), back() {}, end() {} };
+  if (card.hidden || !p) return flight;
+  closeBoxMenu();
+  el.handles.hidden = true;
+  card.classList.add('leaving');
+  const w = card.offsetWidth;
+  const h = card.offsetHeight;
+  const s = p.scale;
+  const s1 = s * Math.min(1, Math.max(0.3, 300 / Math.max(1, w * s)));
+  const x1 = innerWidth + 24; // all the way past the page's right edge, where the chat is
+  const y1 = p.y + (h * s - h * s1) / 2; // (level with where it was)
+  const anims = [];
+  try {
+    anims.push(
+      prefers.lessMotion
+        ? card.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 220, easing: 'ease-out', fill: 'forwards' })
+        : card.animate(
+            [{ transform: `translate(${p.x}px, ${p.y}px) scale(${s})` }, { transform: `translate(${x1}px, ${y1}px) scale(${s1})` }],
+            { duration: 640, easing: 'cubic-bezier(.55,0,.3,1)', fill: 'forwards' }
+          )
+    );
+    anims.push(el.dim.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 460, easing: 'ease-out', fill: 'forwards' }));
+  } catch {
+    // no animations here: it simply goes when it's sent
+  }
+  const clear = () => {
+    for (const a of anims) a.cancel();
+    card.classList.remove('leaving');
+    if (flying === flight) flying = null;
+  };
+  flight.landed = Promise.all(anims.map((a) => a.finished.catch(() => {})));
+  // The chat couldn't take it: it comes back, as it was.
+  flight.back = () => {
+    clear();
+    if (['compose', 'review'].includes(app.state)) placeHandles(true);
+  };
+  // It's in the chat: the box and the dark screen are put away for real (so nothing comes back for a moment).
+  flight.end = () => {
+    card.hidden = true;
+    dim(false);
+    clear();
+  };
+  flight.clear = clear;
+  flying = flight;
+  return flight;
+}
+
 async function pictureForChat() {
-  if (!(await ensureCommitted())) return null;
-  const out = await exportImage({ shot: app.shot.bitmap, shotScale: app.shot.scale, region: app.region, layout: app.layout, highlights: app.highlights, source: app.source });
+  const out = await exportImage({ shot: app.shot.bitmap, shotScale: app.shot.scale, region: app.region, layout: app.layout, highlights: app.highlights, source: app.source, ...(await snipText()) });
   const name = fileName('Screenshot', out.ext);
   return { file: new File([out.blob], name, { type: out.blob.type }), kind: 'image', width: out.width, height: out.height };
 }
 
+// The words your snip shows (asked of the page, briefly: it never holds up a save) and what you wrote about
+// them. They go into the picture's file, where the chat's Ask AI reads them.
+async function snipText() {
+  const note = app.hasCaption && app.layout ? app.layout.text || '' : '';
+  let words = '';
+  try {
+    const r = await Promise.race([page('words', { rect: app.region }), sleep(800).then(() => '')]);
+    words = typeof r === 'string' ? r : '';
+  } catch {}
+  return { words, note };
+}
+
 async function videoForChat() {
-  if (!(await committedForVideo())) throw Object.assign(new Error('Your text is over 280 characters.'), { quiet: true });
   const made = await videoMade();
   return { file: new File([made.blob], made.meta.name, { type: 'video/mp4' }), kind: 'video', width: made.meta.width, height: made.meta.height, seconds: made.meta.seconds };
 }

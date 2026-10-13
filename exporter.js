@@ -44,7 +44,9 @@ function toBlob(canvas, type, quality) {
 /* ------------------------------- images ------------------------------- */
 
 // Where a saved picture is from, written into the file (a PNG text chunk "Source", or a JPEG comment),
-// so the chat can still offer "Copy source link" when the saved file is dragged into it.
+// so the chat can still offer "Copy source link" when the saved file is dragged into it. And the words the
+// snip shows, with what you wrote about them (a PNG iTXt chunk "Annotated.com", or a JPEG comment
+// "Annotated.com text: " with them as JSON), so the chat's Ask AI can read them exactly.
 const CRC = new Uint32Array(256).map((_, n) => {
   let c = n;
   for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
@@ -55,34 +57,75 @@ function crc32(bytes) {
   for (const b of bytes) c = CRC[(c ^ b) & 255] ^ (c >>> 8);
   return (c ^ 0xffffffff) >>> 0;
 }
-export async function withSource(out, source) {
-  if (!source || !/^https?:\/\//i.test(source) || source.length > 2048) return out;
-  let ascii;
-  try {
-    ascii = source.replace(/[^\x20-\x7e]/gu, (ch) => encodeURIComponent(ch)); // (whole characters, emoji too)
-  } catch {
-    return out;
+// The words and your text, as they go into the file (whole characters; at most WORDS_MAX and NOTE_MAX).
+export const WORDS_MAX = 4000;
+const NOTE_MAX = 1000;
+export function textInfo({ words = '', note = '' } = {}) {
+  const cut = (s, n) => {
+    const a = Array.from(String(s || '').replace(/\r/g, '').trim());
+    return a.length > n ? a.slice(0, n).join('') : a.join('');
+  };
+  const w = cut(words, WORDS_MAX);
+  const t = cut(note, NOTE_MAX);
+  return w || t ? JSON.stringify({ words: w, note: t }) : '';
+}
+
+function pngChunk(type, data) {
+  const body = new Uint8Array(4 + data.length);
+  body.set(new TextEncoder().encode(type), 0);
+  body.set(data, 4);
+  const chunk = new Uint8Array(body.length + 8);
+  const len = data.length;
+  chunk.set([len >>> 24, (len >>> 16) & 255, (len >>> 8) & 255, len & 255], 0);
+  chunk.set(body, 4);
+  const crc = crc32(body);
+  chunk.set([crc >>> 24, (crc >>> 16) & 255, (crc >>> 8) & 255, crc & 255], 4 + body.length);
+  return chunk;
+}
+
+function jpegComment(text) {
+  const bytes = new TextEncoder().encode(text);
+  if (bytes.length > 65533) return null;
+  const seg = new Uint8Array(bytes.length + 4);
+  seg.set([0xff, 0xfe, (bytes.length + 2) >>> 8, (bytes.length + 2) & 255], 0);
+  seg.set(bytes, 4);
+  return seg;
+}
+
+export async function withSource(out, source, text = {}) {
+  let ascii = '';
+  if (source && /^https?:\/\//i.test(source) && source.length <= 2048) {
+    try {
+      ascii = source.replace(/[^\x20-\x7e]/gu, (ch) => encodeURIComponent(ch)); // (whole characters, emoji too)
+    } catch {
+      ascii = '';
+    }
   }
+  const info = textInfo(text);
+  if (!ascii && !info) return out;
   const buf = new Uint8Array(await out.blob.arrayBuffer());
   let parts = null;
   if (out.blob.type === 'image/png' && buf[12] === 0x49 && buf[13] === 0x48) {
-    // tEXt "Source", right after IHDR (8-byte signature, then IHDR: length, type, 13 bytes, CRC).
+    // Right after IHDR (8-byte signature, then IHDR: length, type, 13 bytes, CRC): tEXt "Source", then
+    // iTXt "Annotated.com" (keyword, 0, not compressed, method 0, no language, no translated keyword, UTF-8).
     const at = 8 + 12 + ((buf[8] << 24) | (buf[9] << 16) | (buf[10] << 8) | buf[11]);
-    const body = new TextEncoder().encode('tEXtSource\0' + ascii);
-    const chunk = new Uint8Array(body.length + 8);
-    const len = body.length - 4;
-    chunk.set([len >>> 24, (len >>> 16) & 255, (len >>> 8) & 255, len & 255], 0);
-    chunk.set(body, 4);
-    const crc = crc32(body);
-    chunk.set([crc >>> 24, (crc >>> 16) & 255, (crc >>> 8) & 255, crc & 255], 4 + body.length);
-    parts = [buf.subarray(0, at), chunk, buf.subarray(at)];
+    const add = [];
+    if (ascii) add.push(pngChunk('tEXt', new TextEncoder().encode('Source\0' + ascii)));
+    if (info) {
+      const head = new TextEncoder().encode('Annotated.com\0\0\0\0\0');
+      const body = new TextEncoder().encode(info);
+      const data = new Uint8Array(head.length + body.length);
+      data.set(head, 0);
+      data.set(body, head.length);
+      add.push(pngChunk('iTXt', data));
+    }
+    parts = [buf.subarray(0, at), ...add, buf.subarray(at)];
   } else if (out.blob.type === 'image/jpeg' && buf[0] === 0xff && buf[1] === 0xd8) {
-    // A comment segment right after the start.
-    const text = new TextEncoder().encode('Annotated.com source: ' + ascii);
-    const seg = new Uint8Array(text.length + 4);
-    seg.set([0xff, 0xfe, (text.length + 2) >>> 8, (text.length + 2) & 255], 0);
-    seg.set(text, 4);
-    parts = [buf.subarray(0, 2), seg, buf.subarray(2)];
+    // Comment segments right after the start.
+    const add = [];
+    if (ascii) add.push(jpegComment('Annotated.com source: ' + ascii));
+    if (info) add.push(jpegComment('Annotated.com text: ' + info));
+    parts = [buf.subarray(0, 2), ...add.filter(Boolean), buf.subarray(2)];
   }
   return parts ? { ...out, blob: new Blob(parts, { type: out.blob.type }) } : out;
 }
@@ -230,14 +273,15 @@ function scales(shotScale, region, layout) {
  * - otherwise a 97% JPEG, which X for web keeps exactly as uploaded (instead of X turning a PNG into
  *   its own 85% JPEG with half the colour detail).
  */
-export async function exportImage({ shot, shotScale, region, layout, highlights = [], source = '' }) {
-  return withSource(await bestImage({ shot, shotScale, region, layout, highlights }), source);
+export async function exportImage({ shot, shotScale, region, layout, highlights = [], source = '', words = '', note = '' }) {
+  const room = SOURCE_ROOM + new TextEncoder().encode(textInfo({ words, note })).length + 64;
+  return withSource(await bestImage({ shot, shotScale, region, layout, highlights, room }), source, { words, note });
 }
 
-// Room left in a saved picture for its source link, written in after it's made (up to a few KB).
+// Room left in a saved picture for its source link (up to a few KB) and its words, written in after it's made.
 const SOURCE_ROOM = 8192;
 
-async function bestImage({ shot, shotScale, region, layout, highlights }) {
+async function bestImage({ shot, shotScale, region, layout, highlights, room = SOURCE_ROOM }) {
   let canvas = null;
   for (const k of scales(shotScale, region, layout)) {
     canvas = composeImage(shot, shotScale, k, region, layout, highlights);
@@ -245,7 +289,7 @@ async function bestImage({ shot, shotScale, region, layout, highlights }) {
     const H = canvas.height;
     const out = (blob, ext) => ({ blob, ext, width: W, height: H, scale: k });
     const png = await toBlob(canvas, 'image/png');
-    if (png.size + SOURCE_ROOM <= X.imageMaxBytes) {
+    if (png.size + room <= X.imageMaxBytes) {
       if (Math.max(W, H) <= X.imageKeepPngEdge) return out(png, 'png');
       const xJpeg = await toBlob(canvas, 'image/jpeg', X.xJpegQuality);
       // A margin, so a near tie goes to the JPEG made here rather than X's own.
@@ -253,10 +297,10 @@ async function bestImage({ shot, shotScale, region, layout, highlights }) {
     }
     for (const q of [0.97, 0.95, 0.93, 0.9]) {
       const jpg = await toBlob(canvas, 'image/jpeg', q);
-      if (jpg.size + SOURCE_ROOM <= X.imageMaxBytes && jpg.size + SOURCE_ROOM <= W * H) return out(jpg, 'jpg');
+      if (jpg.size + room <= X.imageMaxBytes && jpg.size + room <= W * H) return out(jpg, 'jpg');
     }
   }
-  return shrinkToFit(canvas);
+  return shrinkToFit(canvas, room);
 }
 
 // The picture for the clipboard (pasting into a post), which can only hold PNG: the sharpest PNG
@@ -286,13 +330,13 @@ function smaller(c) {
 }
 
 // Last resort for a huge, detailed snip: shrink until a high-quality JPEG fits X's limits.
-async function shrinkToFit(canvas) {
+async function shrinkToFit(canvas, room = SOURCE_ROOM) {
   let c2 = canvas;
   while (c2.width > 400) {
     c2 = smaller(c2);
     for (const q of [0.95, 0.9]) {
       const blob = await toBlob(c2, 'image/jpeg', q);
-      if (blob.size + SOURCE_ROOM <= X.imageMaxBytes && blob.size + SOURCE_ROOM <= c2.width * c2.height) return { blob, ext: 'jpg', width: c2.width, height: c2.height, scale: 0 };
+      if (blob.size + room <= X.imageMaxBytes && blob.size + room <= c2.width * c2.height) return { blob, ext: 'jpg', width: c2.width, height: c2.height, scale: 0 };
     }
   }
   throw new Error('The image is too large to save under 5 MB.');

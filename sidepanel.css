@@ -81,6 +81,9 @@ button { font: inherit; color: inherit; }
 .post:focus-visible { box-shadow: inset 0 0 0 2px var(--ink); }
 .post.arrive { animation: arrive 0.28s ease-out both; }
 @keyframes arrive { from { opacity: 0; transform: translateY(4px); } }
+/* Sent from the bar: it flew off the page to the right, so it comes in here from the left. */
+.post.land { animation: land 0.5s cubic-bezier(.2, .8, .25, 1) both; }
+@keyframes land { from { opacity: 0; transform: translateX(-48px) scale(0.97); } 55% { opacity: 1; } }
 .post.flash { animation: flash 1.2s ease-out; }
 @keyframes flash { 0%, 30% { background: rgba(11, 11, 11, 0.08); } 100% { background: transparent; } }
 .post.sending { opacity: 0.6; }
@@ -97,17 +100,17 @@ button { font: inherit; color: inherit; }
   user-select: none;
 }
 img.avatar { object-fit: cover; background: var(--row); }
-/* The name line: name, "you", then when it was posted and how many have seen it, like X
-   ("Oct 13, 2026 · 5:04 AM · 212 Views", the number in bold). On a narrow panel the date goes under. */
+/* The name line: name, then when it was posted and how many have seen it, like X
+   ("Oct 13, 2026 · 5:04 AM · 212 Views", the number in bold), all in black, never dimmed. On a narrow
+   panel the date goes under. */
 .meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 6px; min-width: 0; }
 .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 /* Signed in with X: @handle, underlined; blue on hover; opens their X profile. */
 a.name { color: inherit; text-decoration: underline; text-decoration-color: currentColor; text-decoration-thickness: 1px; text-underline-offset: 2px; transition: color 0.12s; }
 a.name:hover { color: var(--blue); }
 a.name:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 3px; }
-.you { flex: none; color: var(--ink-3); font-size: var(--small); }
-time { flex: none; color: var(--ink-3); font-size: var(--small); font-variant-numeric: tabular-nums; }
-.when { flex: none; color: var(--ink-3); font-size: var(--small); font-variant-numeric: tabular-nums; white-space: nowrap; }
+time { flex: none; color: var(--ink); font-size: var(--small); font-variant-numeric: tabular-nums; }
+.when { flex: none; color: var(--ink); font-size: var(--small); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .views b { color: var(--ink); font-weight: 700; }
 .body { grid-column: 2; min-width: 0; }
 .text { margin: 1px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -168,7 +171,10 @@ time { flex: none; color: var(--ink-3); font-size: var(--small); font-variant-nu
 .media { display: block; margin: 6px 0 2px; max-width: 100%; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: #fff; }
 .media img, .media video { display: block; max-width: 100%; max-height: 360px; width: auto; height: auto; object-fit: cover; }
 .media video { object-fit: contain; background: #000; }
-a.media { width: fit-content; cursor: zoom-in; }
+a.media { position: relative; width: fit-content; cursor: zoom-in; }
+/* The picture open full size in a tab (press it again to close that tab): ringed in the highlighter's yellow. */
+a.media.viewing { cursor: zoom-out; }
+a.media.viewing::after { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 3px var(--yellow); pointer-events: none; }
 .media.missing { padding: 10px 12px; color: var(--ink-3); font-size: var(--small); }
 
 /* Likes: one neat pill, 👍 then who (up to three round faces, overlapping,
@@ -326,7 +332,8 @@ a.media { width: fit-content; cursor: zoom-in; }
 .menu button.armed .i { color: #fff; }
 .menu button.on .i { fill: currentColor; color: var(--blue); }
 
-/* File a claim: a small form over the chat (from a post's right-click menu). */
+/* File a claim and Ask AI: small windows over the chat. One size of type (bold for the title and the parts),
+   all black on white: nothing dimmed. */
 .claim {
   width: min(360px, calc(100vw - 24px));
   max-height: calc(100vh - 24px);
@@ -339,31 +346,46 @@ a.media { width: fit-content; cursor: zoom-in; }
   font: 400 var(--text)/1.43 var(--ui);
 }
 .claim::backdrop { background: rgba(20, 20, 18, 0.28); }
-.claim h2 { margin: 0 0 6px; font: 600 17px/1.25 var(--ui); }
-.claim .note { margin: 0 0 6px; color: var(--ink-2); font-size: var(--small); }
-.claim label { display: block; margin: 10px 0 4px; color: var(--ink-2); font-size: var(--small); font-weight: 500; }
-.claim textarea, .claim input[type='text'] {
+.claim h2 { margin: 0 0 6px; font: 600 var(--text)/1.43 var(--ui); }
+.claim .note { margin: 0 0 10px; }
+.claim textarea {
   display: block;
   width: 100%;
   padding: 8px 10px;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--ink);
   border-radius: 8px;
   background: #fff;
   color: var(--ink);
-  font: 400 var(--text)/1.4 var(--ui);
+  font: 400 var(--text)/1.43 var(--ui);
   resize: vertical;
 }
-.claim textarea:focus, .claim input[type='text']:focus { outline: 2px solid var(--ink); outline-offset: 1px; border-color: transparent; }
-.claim label.check { display: flex; gap: 8px; align-items: flex-start; margin-top: 12px; color: var(--ink); font-weight: 400; cursor: pointer; }
-.claim label.check input { flex: none; margin: 2px 0 0; accent-color: var(--press); }
-.claim .err { margin: 10px 0 0; color: #c62828; font-size: var(--small); }
+.claim textarea:focus { outline: 2px solid var(--ink); outline-offset: 1px; }
+.claim .err { margin: 10px 0 0; font-weight: 600; }
 .claim .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .claim .actions button { height: 32px; padding: 0 14px; border-radius: 8px; font: 500 var(--text)/1 var(--ui); cursor: pointer; }
-.claim .ghost { border: 1px solid var(--line-strong); background: #fff; color: var(--ink); }
+.claim .ghost { border: 1px solid var(--ink); background: #fff; color: var(--ink); }
 .claim .ghost:hover { background: var(--hover); }
 .claim .primary { border: 0; background: var(--press); color: #fff; }
 .claim .primary:disabled { opacity: 0.6; cursor: default; }
-.claim button:focus-visible, .claim label.check input:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.claim button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+/* Ask AI: the same small window. Each part: what was checked (quoted, marked in the highlighter's yellow), then
+   the verdict (bold) and why, appearing as it's written. */
+.ask { width: min(380px, calc(100vw - 24px)); overflow-y: auto; }
+.ask h3 { margin: 14px 0 4px; font: 600 var(--text)/1.43 var(--ui); }
+.ask .q {
+  display: -webkit-box;
+  margin: 0 0 6px;
+  padding: 0 0 0 9px;
+  border-left: 3px solid var(--yellow);
+  overflow: hidden;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+.ask .ai { margin: 0; min-height: 1.43em; white-space: pre-line; }
+.ask .ai strong { font-weight: 600; }
+.ask .status { margin: 12px 0 0; }
+.ask .status:empty { display: none; }
 
 /* The box at the bottom: one 48 px line to write in, send on the right; the tools sit under it. */
 .dock { flex: none; padding: 6px 12px 10px; }
@@ -532,7 +554,7 @@ body.searching .send, body.searching #replying, body.searching #attach { display
 
 @keyframes glass-fade { from { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
-  .post.arrive, .post.flash, .spin, .menu { animation: none; }
+  .post.arrive, .post.land, .post.flash, .spin, .menu { animation: none; }
   .newer.materialize { animation: glass-fade 0.2s ease-out both; }
   .newer:hover, .newer:active { scale: none; }
   .tool, .send, .post, .likes { transition: none; }
