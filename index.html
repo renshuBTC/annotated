@@ -42,16 +42,10 @@
   .brand {
     display: flex;
     align-items: center;
-    gap: 16px;
     min-width: 0;
   }
-  .brand img {
-    width: 60px;
-    height: 60px;
-    display: block;
-    flex: none;
-  }
   .brand h1 {
+    --cap: 0.715em; /* the height of Newsreader SemiBold's capitals at this display size */
     margin: 0;
     white-space: nowrap;
     font-family: Newsreader, Georgia, "Times New Roman", serif;
@@ -59,6 +53,15 @@
     font-size: 40px;
     line-height: 1.1;
     letter-spacing: -0.01em;
+  }
+  /* The logo beside the name, as on every snip's caption: 1.5 times as tall as the capitals, centred on
+     them, a quarter of its own size away from the name. */
+  .brand img {
+    display: inline-block;
+    width: calc(var(--cap) * 1.5);
+    height: calc(var(--cap) * 1.5);
+    margin-right: calc(var(--cap) * 0.375);
+    vertical-align: calc(var(--cap) * -0.25);
   }
   .add {
     display: inline-flex;
@@ -106,7 +109,6 @@
   }
   @media (max-width: 560px) {
     main { padding-top: 32px; }
-    .brand img { width: clamp(40px, 12.8vw, 48px); height: clamp(40px, 12.8vw, 48px); }
     .brand h1 { font-size: clamp(26px, 8.5vw, 32px); }
     .add { width: 100%; height: 44px; }
     .tagline { margin-top: 32px; font-size: clamp(21px, 6.6vw, 26px); }
@@ -121,14 +123,13 @@
 <main>
   <header>
     <div class="brand">
-      <img src="icon.svg" alt="" width="60" height="60">
-      <h1>Annotated.com</h1>
+      <h1><img src="icon.svg" alt="" width="43" height="43">Annotated.com</h1>
     </div>
     <a class="add" href="Annotated.com.zip" download title="Downloads the extension. Unzip it, open chrome://extensions, turn on Developer mode, and choose Load unpacked.">Add to Chrome</a>
   </header>
   <h2 class="tagline">Annotate anything. Ask AI. Global chat.</h2>
   <div class="video">
-    <iframe src="https://www.youtube-nocookie.com/embed/HK3gKABrgu4?rel=0" title="Annotated.com demo" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+    <iframe src="https://www.youtube-nocookie.com/embed/UYfQ-rJFxgE?rel=0" title="Annotated.com demo" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
   </div>
 </main>
 </body>
