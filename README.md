@@ -2,7 +2,7 @@
 
 # Annotated.com
 
-**Website: https://renshubtc.github.io/annotated/** · [Demo video](https://youtu.be/HK3gKABrgu4)
+**Website: https://renshubtc.github.io/annotated/** · [Demo video](https://youtu.be/UYfQ-rJFxgE)
 
 **Annotate anything. Ask AI. Global chat.**
 
@@ -36,7 +36,7 @@ Click the icon (or press **Alt+Shift+S**). The bar appears at the top of the pag
 | 🎥 Screen recording | Make a video. |
 | ▭ Select an area | Drag a box around what you want. |
 | ▤ Select a post, image or video | Click the thing you want, and the box fits it. |
-| ● Record | Start recording your area, after a 2-second countdown. |
+| ● Record | Start recording your area, after a 2-second countdown. A recording stops by itself at 90 seconds. |
 | ❚❚ Pause | Pause the recording. Press again to carry on. |
 | ■ Stop | Stop the recording (**Esc** does too). |
 | 0:00 | How long the recording is. |
@@ -51,8 +51,8 @@ Click the icon (or press **Alt+Shift+S**). The bar appears at the top of the pag
 
 One chat for everyone with Annotated.com, in Chrome's side panel. Annotations (pictures and videos made with Annotated.com, with their source link) go to everyone, and everything else is a reply to one.
 
-- Press a picture to see it full size. Press it again to close it.
-- Right-click a post to **Reply**, **Like**, **Download** or **Copy** it, or **Go to source link**.
+- Click an annotation to reply to it. Clicking its picture also opens it full size, so you can read it while you write; click it again to close it.
+- Right-click a post to **Reply** or **Like** it, **Go to source link**, or **Download** or **Copy** it.
 - **Ask AI** fact-checks an annotation with Chrome's built-in AI, on your computer.
 - **File a claim** if a post uses your work beyond fair use. It goes privately to the people who run the chat.
 - You get a random name. Click **Posting as …** under the chat box to change it.

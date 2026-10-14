@@ -64,8 +64,9 @@ button { font: inherit; color: inherit; }
 .older { margin: 8px 0; text-align: center; color: var(--ink-3); font-size: var(--small); }
 .list { list-style: none; margin: 0; padding: 0; }
 
-.day { display: flex; align-items: center; gap: 10px; margin: 10px 4px 6px; color: var(--ink-3); font: 500 var(--small)/1 var(--ui); }
-.day::before, .day::after { content: ''; flex: 1 1 auto; height: 1px; background: var(--line); }
+/* The day between posts ("Today", "Tue, Oct 13"), in black between two thin black lines, never dimmed. */
+.day { display: flex; align-items: center; gap: 10px; margin: 10px 4px 6px; color: var(--ink); font: 500 var(--small)/1 var(--ui); }
+.day::before, .day::after { content: ''; flex: 1 1 auto; height: 1px; background: var(--ink); }
 
 .post {
   position: relative;
@@ -130,29 +131,20 @@ time { flex: none; color: var(--ink); font-size: var(--small); font-variant-nume
 /* The post you're answering. */
 .post.target { background: hsl(212 80% 56% / 0.08); box-shadow: inset 0 0 0 1.5px hsl(212 80% 56% / 0.45); }
 
-/* An annotation (made with Annotated.com) takes the whole post: the picture or video edge to edge, as
-   wide as the post. Who posted it, when, and how many have seen it sit on a small white label at its
-   top left, on the picture: their face, then their name over the date, time and views. Whom it
-   answers and any words they added go under it, in white like its caption (lined up with its text). */
-.post.annot { display: block; padding: 6px; }
+/* An annotation (made with Annotated.com) takes the whole post, as a card: who posted it, when, and how
+   many have seen it across its top (their face, then their name over the date, time and views, lined up
+   with the picture's own text), then the picture or video edge to edge under it, with nothing over it.
+   Whom it answers and any words they added go under that, in white like its caption. */
+.post.annot { display: block; padding: 6px; cursor: pointer; }
 .post.annot .body { min-width: 0; }
 .post.annot .card { position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
 .post.annot .meta {
-  position: absolute;
-  z-index: 1;
-  top: 8px;
-  left: 8px;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 0 8px;
-  max-width: calc(100% - 16px);
-  padding: 6px 14px 6px 8px;
-  border-radius: 23px;
-  background: rgba(255, 255, 255, 0.93);
-  -webkit-backdrop-filter: blur(12px) saturate(1.5);
-  backdrop-filter: blur(12px) saturate(1.5);
-  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.16), 0 2px 10px rgba(0, 0, 0, 0.16);
+  padding: 8px 3.3%;
+  border-bottom: 1px solid var(--line);
   line-height: 1.3;
 }
 .post.annot .meta .avatar { grid-row: 1 / span 2; }
@@ -166,16 +158,19 @@ time { flex: none; color: var(--ink); font-size: var(--small); font-variant-nume
 .post.annot .media { display: block; width: 100% !important; max-width: none; min-height: 62px; margin: 0; border: 0; border-radius: 0; background: #fff; }
 .post.annot .media img, .post.annot .media video { width: 100%; height: auto; max-height: 75vh; object-fit: contain; }
 .post.annot .media video { background: #fff; }
-.post.annot .media.missing { padding: 52px 3.3% 12px; }
+.post.annot .media.missing { padding: 12px 3.3%; }
 
 /* Pictures and videos: as wide as the panel allows, never taller than 360 px. */
 .media { display: block; margin: 6px 0 2px; max-width: 100%; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: #fff; }
 .media img, .media video { display: block; max-width: 100%; max-height: 360px; width: auto; height: auto; object-fit: cover; }
 .media video { object-fit: contain; background: #000; }
 a.media { position: relative; width: fit-content; cursor: zoom-in; }
-/* The picture open full size in a tab (press it again to close that tab): ringed in the highlighter's yellow. */
+/* The picture open full size in a tab (press it again to close that tab): ringed in the highlighter's yellow.
+   On an annotation, the whole card is ringed: its label (who, when, views), the picture and any words under it. */
 a.media.viewing { cursor: zoom-out; }
 a.media.viewing::after { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 3px var(--yellow); pointer-events: none; }
+.post.annot .card:has(> a.media.viewing) { border-color: var(--yellow); box-shadow: 0 0 0 2px var(--yellow); }
+.post.annot a.media.viewing::after { content: none; }
 .media.missing { padding: 10px 12px; color: var(--ink-3); font-size: var(--small); }
 
 /* Likes: one neat pill, 👍 then who (up to three round faces, overlapping,
@@ -328,6 +323,11 @@ a.media.viewing::after { content: ''; position: absolute; inset: 0; border-radiu
   outline: none;
 }
 .menu button .i { width: 16px; height: 16px; color: var(--ink-2); }
+/* Between the menu's groups: a thin line (only between two groups that both have something in them). */
+.menu .sep { height: 1px; margin: 4px 10px; background: rgba(0, 0, 0, 0.12); }
+@media (prefers-contrast: more) {
+  .menu .sep { background: #000; }
+}
 .menu button:hover, .menu button:focus-visible { background: rgba(0, 0, 0, 0.06); }
 .menu button.armed { background: var(--press); color: #fff; }
 .menu button.armed .i { color: #fff; }
@@ -370,20 +370,11 @@ a.media.viewing::after { content: ''; position: absolute; inset: 0; border-radiu
 .claim .primary:disabled { opacity: 0.6; cursor: default; }
 .claim button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 
-/* Ask AI: the same small window. Each part: what was checked (quoted, marked in the highlighter's yellow), then
-   the verdict (bold) and why, appearing as it's written. */
+/* Ask AI: the same small window, with one answer for the whole annotation: its verdict (bold), then why,
+   for the snip's words and what its poster wrote, appearing as it's written. */
 .ask { width: min(380px, calc(100vw - 24px)); overflow-y: auto; }
-.ask h3 { margin: 14px 0 4px; font: 600 var(--text)/1.43 var(--ui); }
-.ask .q {
-  display: -webkit-box;
-  margin: 0 0 6px;
-  padding: 0 0 0 9px;
-  border-left: 3px solid var(--yellow);
-  overflow: hidden;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-}
-.ask .ai { margin: 0; min-height: 1.43em; white-space: pre-line; }
+.ask .ai { margin: 8px 0 0; min-height: 1.43em; white-space: pre-line; }
+.ask .ai:empty { display: none; }
 .ask .ai strong { font-weight: 600; }
 .ask .status { margin: 12px 0 0; }
 .ask .status:empty { display: none; }
@@ -489,7 +480,7 @@ body.searching .send, body.searching #replying, body.searching #attach { display
   border: 0;
   border-radius: 8px;
   background: transparent;
-  color: var(--ink-2);
+  color: var(--ink);
   cursor: pointer;
   transition: transform 0.35s var(--spring), background-color 0.15s, color 0.15s;
 }
@@ -509,24 +500,24 @@ body.searching .send, body.searching #replying, body.searching #attach { display
   border: 0;
   border-radius: 8px;
   background: transparent;
-  color: var(--ink-3);
+  color: var(--ink);
   font: 400 var(--small)/1 var(--ui);
   white-space: nowrap;
   cursor: pointer;
 }
-.me b { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--ink-2); font-weight: 500; }
+.me b { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--ink); font-weight: 500; }
 .me .i { width: 11px; height: 11px; opacity: 0; transition: opacity 0.12s; }
 .me:hover { background: var(--hover); }
 .me:hover .i, .me:focus-visible .i { opacity: 1; }
 /* Signed in with X: "Posting as @handle", the handle opening your X profile. */
 .me-x { cursor: default; }
 .me-x:hover { background: transparent; }
-.me-x a { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--ink-2); font-weight: 500; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
+.me-x a { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--ink); font-weight: 500; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
 .me-x a:hover { color: var(--blue); }
 .me-edit { flex: 0 1 180px; min-width: 0; height: 26px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 8px; outline: 0; background: #fff; color: var(--ink); font: 500 var(--small)/1 var(--ui); }
-.left { flex: 1 1 auto; text-align: right; color: var(--ink-3); font: 500 var(--small)/1 var(--ui); font-variant-numeric: tabular-nums; }
+.left { flex: 1 1 auto; text-align: right; color: var(--ink); font: 500 var(--small)/1 var(--ui); font-variant-numeric: tabular-nums; }
 .left.over { color: #c62828; font-weight: 700; } /* past 280: how many to cut */
-.online { flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 0 4px 0 6px; color: var(--ink-3); font: 500 var(--small)/1 var(--ui); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.online { flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 0 4px 0 6px; color: var(--ink); font: 500 var(--small)/1 var(--ui); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .online .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--live); box-shadow: 0 0 0 3px rgba(34, 160, 107, 0.14); }
 
 /* What you're about to post. */

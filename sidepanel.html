@@ -51,18 +51,21 @@
 
 <button id="newer" class="newer" type="button" hidden><svg class="i" aria-hidden="true"><use href="#i-down"/></svg><span>New posts</span></button>
 
-<!-- Right-click a post (or press the menu key on it): reply, delete (your own), like, download (a
-     picture or video), copy it, on an annotation made with Annotated.com go to its source (a new tab), on
-     an annotation picture ask Chrome's AI about it, and file a claim (someone else's post). -->
+<!-- Right-click a post (or press the menu key on it). The things you do most first, in three groups: answer it
+     (reply, like); use it (on an annotation picture ask Chrome's AI about it, on an annotation made with
+     Annotated.com go to its source in a new tab, download the picture or video, copy it); and last, apart,
+     file a claim (someone else's post) or delete (your own). -->
 <div id="menu" class="menu" role="menu" aria-label="Post" tabindex="-1" hidden>
   <button type="button" role="menuitem" data-act="reply"><svg class="i" aria-hidden="true"><use href="#i-reply"/></svg><span>Reply</span></button>
-  <button type="button" role="menuitem" data-act="delete"><svg class="i" aria-hidden="true"><use href="#i-trash"/></svg><span class="lbl">Delete</span></button>
   <button type="button" role="menuitem" data-act="like"><svg class="i" aria-hidden="true"><use href="#i-like"/></svg><span class="lbl">Like</span></button>
+  <div class="sep" role="separator"></div>
+  <button type="button" role="menuitem" data-act="ask"><svg class="i" aria-hidden="true"><use href="#i-ai"/></svg><span>Ask AI</span></button>
+  <button type="button" role="menuitem" data-act="source"><svg class="i" aria-hidden="true"><use href="#i-link"/></svg><span>Go to source link</span></button>
   <button type="button" role="menuitem" data-act="download"><svg class="i" aria-hidden="true"><use href="#i-save"/></svg><span>Download</span></button>
   <button type="button" role="menuitem" data-act="copy"><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg><span class="lbl">Copy image</span></button>
-  <button type="button" role="menuitem" data-act="source"><svg class="i" aria-hidden="true"><use href="#i-link"/></svg><span>Go to source link</span></button>
-  <button type="button" role="menuitem" data-act="ask"><svg class="i" aria-hidden="true"><use href="#i-ai"/></svg><span>Ask AI</span></button>
+  <div class="sep" role="separator"></div>
   <button type="button" role="menuitem" data-act="claim"><svg class="i" aria-hidden="true"><use href="#i-flag"/></svg><span>File a claim</span></button>
+  <button type="button" role="menuitem" data-act="delete"><svg class="i" aria-hidden="true"><use href="#i-trash"/></svg><span class="lbl">Delete</span></button>
 </div>
 
 <!-- File a claim: for someone whose work a post uses beyond fair use. One box: what's yours, with your email
@@ -81,21 +84,12 @@
   </form>
 </dialog>
 
-<!-- Ask AI: Chrome's own AI model, on this computer (nothing is sent anywhere), checks an annotation: the
-     words in its snip, and what its poster wrote about them. -->
+<!-- Ask AI: Chrome's own AI model, on this computer (nothing is sent anywhere), checks an annotation as a
+     whole, in one answer: the words in its snip and what its poster wrote about them. -->
 <dialog id="ask" class="claim ask" aria-labelledby="askTitle">
   <form method="dialog">
     <h2 id="askTitle">Ask AI</h2>
-    <section aria-labelledby="askWordsH">
-      <h3 id="askWordsH">The words in the box</h3>
-      <blockquote id="askWordsQ" class="q" hidden></blockquote>
-      <p id="askWords" class="ai"></p>
-    </section>
-    <section aria-labelledby="askTakeH">
-      <h3 id="askTakeH">What they wrote</h3>
-      <blockquote id="askTakeQ" class="q" hidden></blockquote>
-      <p id="askTake" class="ai"></p>
-    </section>
+    <p id="askAnswer" class="ai"></p>
     <p id="askStatus" class="status" role="status" aria-live="polite"></p>
     <div class="actions">
       <button type="button" id="askGet" class="ghost" hidden>Download the AI model</button>
@@ -119,7 +113,7 @@
       <div class="progress" hidden><i></i></div>
     </div>
     <div class="input">
-      <textarea id="text" rows="1" maxlength="2000" placeholder="Right-click an annotation to reply" aria-label="Reply" disabled></textarea>
+      <textarea id="text" rows="1" maxlength="2000" placeholder="Click an annotation to reply" aria-label="Reply" disabled></textarea>
       <input id="q" type="search" maxlength="100" placeholder="Search the chat" aria-label="Search the chat" spellcheck="false" hidden>
       <button id="send" class="send" type="submit" aria-label="Send" title="Send" disabled><svg class="i" aria-hidden="true"><use href="#i-up"/></svg></button>
     </div>

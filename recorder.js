@@ -206,8 +206,8 @@ export class Recorder {
     this.crop = { x, y, width: w, height: h };
 
     // Generous bitrate: this is an intermediate copy, so keep it close to lossless
-    // (but bounded: a 2:20 clip is held in memory until it's saved).
-    const bitrate = Math.round(clamp(w * h * 30 * 0.15, 3e6, 16e6)); // (a long, big recording fits in memory)
+    // (but bounded: a 90-second clip, at most about 270 MB, is held in memory until it's saved).
+    const bitrate = Math.round(clamp(w * h * 30 * 0.2, 3e6, 24e6));
     const base = { width: w, height: h, displayWidth: w, displayHeight: h, bitrate, framerate: 30, latencyMode: 'realtime', bitrateMode: 'variable' };
     const cfg = await firstSupportedVideoConfig([
       { ...base, codec: avcCodec('6400', w, h, 30, bitrate), avc: { format: 'avc' } },

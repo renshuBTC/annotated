@@ -17,7 +17,8 @@ export const X = {
   // X shows a single image uncropped in the timeline between 2:1 (wide) and 3:4 (tall).
   imageMaxWide: 2,
   imageMaxTall: 3 / 4,
-  videoMaxSeconds: 140,
+  // The longest recording: 90 seconds (X itself takes videos up to 2:20).
+  videoMaxSeconds: 90,
   videoFps: 30,
   // X video uploads: aspect ratio between 1:2.39 and 2.39:1, up to 1920x1200 (or 1200x1900).
   videoMaxAspect: 2.39,
@@ -408,7 +409,7 @@ export async function exportVideo({ rec, region, layout, highlights = [], onProg
   const plan = planVideo(region, layout.height, nativeScale);
   const { W, H } = plan;
   const useAudio = rec.audio && rec.audio.codec === 'aac' && rec.audio.chunks.length;
-  // Whole audio frames only, all ending before the video does (so the file never runs past 2:20).
+  // Whole audio frames only, all ending before the video does (so the file never runs past its 90 seconds).
   const audioChunks = useAudio ? rec.audio.chunks.filter((c) => c.timestamp >= 0 && c.timestamp + (c.duration || 0) <= durationUs) : [];
   // A size cap (the chat's file limit): a lower bitrate, so the whole file fits with its sound (the sound's
   // real size, and some room to spare).

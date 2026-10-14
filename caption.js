@@ -11,8 +11,10 @@ export const FONT_STACK =
 export const COLORS = { bg: '#ffffff', fg: '#000000', rule: '#000000' };
 export const CREDIT = 'Annotated.com';
 // The logo, in a 24 x 24 square: the yellow square (as on the icon) and Newsreader's "a" (icons/icon.svg).
-// The "a" runs from y 5.04 to 18.96 of the 24: aShare is its height as a share of the square's.
-const LOGO = { aShare: 0.58, yellow: '#ffe24d', radius: 5.4, a: 'M13.24 10.15 13.27 10.77Q11.9 11.23 11.05 11.66Q10.2 12.09 9.75 12.54Q9.3 12.98 9.14 13.5Q8.97 14.01 8.97 14.64Q8.97 15.72 9.47 16.22Q9.97 16.72 10.74 16.72Q11.29 16.72 11.69 16.5Q12.09 16.28 12.32 15.83Q12.55 15.39 12.55 14.69V8.61Q12.55 7.46 11.96 6.84Q11.36 6.22 10.15 6.22Q9.55 6.22 9.01 6.28Q8.46 6.35 8.12 6.48L8.72 5.79Q8.64 6.54 8.54 7.11Q8.45 7.67 8.33 8.05Q8.21 8.43 8.04 8.64Q7.85 8.9 7.46 9.06Q7.06 9.22 6.6 9.22Q5.99 9.22 5.69 9.01Q5.38 8.79 5.38 8.4Q5.38 7.82 5.95 7.24Q6.52 6.65 7.45 6.15Q8.39 5.65 9.53 5.34Q10.66 5.04 11.8 5.04Q13.45 5.04 14.45 5.52Q15.44 6 15.89 6.87Q16.33 7.74 16.33 8.93V16.15Q16.33 16.52 16.45 16.74Q16.56 16.97 16.78 17.07Q17 17.18 17.28 17.18Q17.64 17.18 18 17.07Q18.36 16.97 18.74 16.74V17.28Q17.75 18.29 16.92 18.63Q16.09 18.96 15.09 18.96Q14.17 18.96 13.62 18.6Q13.07 18.23 12.83 17.5Q12.58 16.76 12.54 15.64L12.67 15.72Q12.42 16.76 11.92 17.48Q11.41 18.2 10.7 18.57Q9.99 18.94 9.11 18.94Q7.32 18.94 6.29 18.04Q5.26 17.14 5.26 15.53Q5.26 14.71 5.54 14.06Q5.83 13.42 6.65 12.83Q7.47 12.24 9.06 11.6Q10.64 10.96 13.24 10.15Z' };
+// Beside the name it's 1.5 times as tall as the name's capitals and centred on them, a quarter of its own
+// size away: how most product logos sit beside their name (the website's logo is set the same way).
+export const LOGO_CAPS = 1.5;
+const LOGO = { yellow: '#ffe24d', radius: 5.4, a: 'M13.24 10.15 13.27 10.77Q11.9 11.23 11.05 11.66Q10.2 12.09 9.75 12.54Q9.3 12.98 9.14 13.5Q8.97 14.01 8.97 14.64Q8.97 15.72 9.47 16.22Q9.97 16.72 10.74 16.72Q11.29 16.72 11.69 16.5Q12.09 16.28 12.32 15.83Q12.55 15.39 12.55 14.69V8.61Q12.55 7.46 11.96 6.84Q11.36 6.22 10.15 6.22Q9.55 6.22 9.01 6.28Q8.46 6.35 8.12 6.48L8.72 5.79Q8.64 6.54 8.54 7.11Q8.45 7.67 8.33 8.05Q8.21 8.43 8.04 8.64Q7.85 8.9 7.46 9.06Q7.06 9.22 6.6 9.22Q5.99 9.22 5.69 9.01Q5.38 8.79 5.38 8.4Q5.38 7.82 5.95 7.24Q6.52 6.65 7.45 6.15Q8.39 5.65 9.53 5.34Q10.66 5.04 11.8 5.04Q13.45 5.04 14.45 5.52Q15.44 6 15.89 6.87Q16.33 7.74 16.33 8.93V16.15Q16.33 16.52 16.45 16.74Q16.56 16.97 16.78 17.07Q17 17.18 17.28 17.18Q17.64 17.18 18 17.07Q18.36 16.97 18.74 16.74V17.28Q17.75 18.29 16.92 18.63Q16.09 18.96 15.09 18.96Q14.17 18.96 13.62 18.6Q13.07 18.23 12.83 17.5Q12.58 16.76 12.54 15.64L12.67 15.72Q12.42 16.76 11.92 17.48Q11.41 18.2 10.7 18.57Q9.99 18.94 9.11 18.94Q7.32 18.94 6.29 18.04Q5.26 17.14 5.26 15.53Q5.26 14.71 5.54 14.06Q5.83 13.42 6.65 12.83Q7.47 12.24 9.06 11.6Q10.64 10.96 13.24 10.15Z' };
 let logoPath = null;
 function drawLogo(ctx, x, y, size) {
   if (!logoPath) logoPath = new Path2D(LOGO.a);
@@ -150,12 +152,12 @@ export function layoutCaption({ text, source, width }) {
   const rtl = /^[^\p{L}]*[\p{sc=Hebrew}\p{sc=Arabic}\p{sc=Syriac}\p{sc=Thaana}\p{sc=Nko}]/u.test(clean);
   const footer = !!source;
   ctx.font = srcFont;
-  // The credit: the logo, a small gap, then the name, on one line. The logo's base sits on the name's
-  // baseline (one straight line under both), and it's sized so its "a" is as tall as the name's "a"s.
-  const am = ctx.measureText('a');
-  const aH = (am.actualBoundingBoxAscent || m.srcSize * 0.48) + (am.actualBoundingBoxDescent || 0);
-  const logoSize = aH / LOGO.aShare;
-  const logoGap = m.srcSize * 0.35;
+  // The credit: the logo, a gap, then the name, on one line (see LOGO_CAPS): the logo centred on the
+  // name's capitals, so it reaches as far above them as below the baseline.
+  const capH = ctx.measureText('H').actualBoundingBoxAscent || m.srcSize * 0.66;
+  const logoSize = capH * LOGO_CAPS;
+  const logoGap = logoSize / 4;
+  const logoAbove = (capH + logoSize) / 2; // (from the baseline up to the logo's top)
   const creditText = ctx.measureText(CREDIT).width;
   const creditW = logoSize + logoGap + creditText;
   const gapW = m.srcSize * 1.5;
@@ -196,13 +198,13 @@ export function layoutCaption({ text, source, width }) {
     if (lastBase != null) {
       ctx.font = srcFont;
       const tall = ctx.measureText('Hhdl/').actualBoundingBoxAscent || m.srcSize * 0.72;
-      y = lastBase + m.gap + (beside ? Math.max(logoSize, tall) : tall) - base;
+      y = lastBase + m.gap + (beside ? Math.max(logoAbove, tall) : tall) - base;
     }
     srcLines.forEach((t, i) => placed.push({ t, x: 0, y: y + i * m.srcLineH + base, font: srcFont, color: colors.fg }));
     // Beside the link: at the right end of its first row. Stacked (thin snips): its own row, left.
     const row = beside ? y : y + srcLines.length * m.srcLineH; // the top of the credit's row
     const lx = beside ? inner - creditText - logoGap - logoSize : 0;
-    placed.push({ logo: true, x: lx, y: row + base - logoSize * fitK, size: logoSize * fitK }); // its base on the baseline
+    placed.push({ logo: true, x: lx, y: row + base - logoAbove * fitK, size: logoSize * fitK }); // centred on the capitals
     if (beside) placed.push({ t: CREDIT, x: inner, align: 'right', y: row + base, font: srcFont, color: colors.fg });
     else placed.push({ t: CREDIT, x: (logoSize + logoGap) * fitK, y: row + base, font: creditFont, color: colors.fg });
     y += (srcLines.length + (beside ? 0 : 1)) * m.srcLineH;

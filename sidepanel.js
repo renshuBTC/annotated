@@ -1,8 +1,8 @@
 // Annotated.com: the chat, in Chrome's side panel. Everyone with the extension shares one room: write,
 // or paste/drop an annotation picture or video (or send it from the bar's Annotated.com button), and
-// everyone sees it live, in threads (each reply right under the post it answers). Right-click a post to
-// reply, delete it (yours), like it, download it, copy the source link of an annotation, or ask Chrome's
-// built-in AI what it makes of an annotation (Ask AI, on this computer). Search the
+// everyone sees it live, in threads (each reply right under the post it answers). Click an annotation to
+// reply to it; right-click a post to reply, delete it (yours), like it, download it, copy the source link of
+// an annotation, or ask Chrome's built-in AI what it makes of an annotation (Ask AI, on this computer). Search the
 // whole chat from the box. Posts live in Supabase (see supabase/setup.sql): anyone can read, you post
 // as yourself (an anonymous sign-in kept in this Chrome profile), and you can delete only yours.
 // (Signing in with X is switched off for now.)
@@ -43,11 +43,7 @@ const el = {
   claimSend: $('#claimSend'),
   claimCancel: $('#claimCancel'),
   ask: $('#ask'),
-  askWordsQ: $('#askWordsQ'),
-  askWords: $('#askWords'),
-  askTakeH: $('#askTakeH'),
-  askTakeQ: $('#askTakeQ'),
-  askTake: $('#askTake'),
+  askAnswer: $('#askAnswer'),
   askStatus: $('#askStatus'),
   askGet: $('#askGet'),
   askClose: $('#askClose'),
@@ -463,6 +459,10 @@ function keepLocal(path, file) {
   }
 }
 
+// A post's picture or video: your own copy while there is one (it's read from here, at once), otherwise
+// from storage.
+const mediaUrl = (path) => localMedia.get(path) || publicUrl(path);
+
 // A copy let go (its post deleted or not made, or older copies past the last few): the picture or video
 // is shown from storage instead.
 function forgetLocal(path) {
@@ -504,11 +504,14 @@ function makeMedia(p) {
   a.title = viewer.postId === p.id ? 'Close the full-size tab' : 'Open full size';
   a.dataset.view = p.id;
   if (viewer.postId === p.id) a.classList.add('viewing');
-  // A press opens it full size in a tab of its own; pressing it again closes that tab (see toggleViewer).
-  // Ctrl/⌘/Shift-click and middle-click open it the usual way.
+  // A press opens it full size in a tab of its own, and (in the chat) starts your reply to it, so you can
+  // read it big and answer it; pressing it again closes that tab (see toggleViewer). Ctrl/⌘/Shift-click
+  // and middle-click open it the usual way.
   a.addEventListener('click', (e) => {
     if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
     e.preventDefault();
+    const closing = viewer.postId === p.id;
+    if (!closing && canReply(p) && el.list.contains(a)) setReply(state.posts.get(p.id) || p);
     toggleViewer(p);
   });
   const img = document.createElement('img');
@@ -528,8 +531,9 @@ function makeMedia(p) {
 
 
 // Pictures open full size in a tab of their own (view.html: the picture, with who posted it, when, and how
-// many have seen it on its top left, as on its card), one at a time. Press a picture: it opens in a new tab right
-// after the page you're on. Press the same picture again: that tab closes, and you're back on the page.
+// many have seen it above it, as on its card), one at a time. Press a picture: it opens in a new tab right
+// after the page you're on (and your reply to it starts here, so you can answer it while you read it). Press
+// the same picture again: that tab closes, and you're back on the page.
 // Press another: the open one's tab closes and the new one opens. (Closing the tab yourself is fine too.)
 const viewer = { tabId: null, postId: null, busy: false };
 
@@ -698,9 +702,9 @@ function makePost(p, { hit = null } = {}) {
   return li;
 }
 
-// An annotation takes the whole post: the picture or video edge to edge, with who posted it, when, and
-// how many have seen it on a small white label at its top left, on the picture (their face, then their
-// name over the date, time and views). Whom it answers and any words they added go under it.
+// An annotation takes the whole post, as a card: who posted it, when, and how many have seen it across its
+// top (their face, then their name over the date, time and views), then the picture or video edge to edge,
+// with nothing over it. Whom it answers and any words they added go under it. A click on it answers it.
 function makeAnnotationPost(li, p, { hit, mine }) {
   li.classList.add('annot');
   const body = node('div', 'body');
@@ -1180,7 +1184,7 @@ function onLike(l) {
 /* Reply, like, delete, copy the source link                           */
 /* ------------------------------------------------------------------ */
 
-// Reply (right-click a post → Reply): above the box, only the caption of what you're answering (cut
+// Reply (click an annotation, or right-click it → Reply): above the box, only the caption of what you're answering (cut
 // from their annotation: the white part under its thin black line), or the words of a text post; the
 // post itself is outlined in the chat. Your post goes under theirs. ✕ or Esc stops replying.
 function setReply(p) {
@@ -1223,7 +1227,7 @@ function captionOf(p) {
 }
 
 async function frameOf(p) {
-  const url = publicUrl(p.media_path);
+  const url = mediaUrl(p.media_path);
   if (p.media_type !== 'video') {
     const r = await fetch(url);
     if (!r.ok) throw new Error(String(r.status));
@@ -1415,7 +1419,7 @@ async function downloadMedia(p) {
   if (!p.media_path || !PATH_OK.test(p.media_path)) return;
   setBanner('Downloading…');
   try {
-    const r = await fetch(publicUrl(p.media_path));
+    const r = await fetch(mediaUrl(p.media_path));
     if (!r.ok) throw new Error(r.status === 404 || r.status === 400 ? 'it isn’t there any more.' : `the server said ${r.status}.`);
     const url = URL.createObjectURL(await r.blob());
     const a = document.createElement('a');
@@ -1552,9 +1556,10 @@ async function sendClaim() {
 }
 
 // Ask AI: a fact check by Chrome's own AI model (Gemini Nano, on this computer: nothing about the post is
-// sent anywhere), in a window like File a claim: first the words in the snip, then what its poster wrote
-// about them, each with a verdict (True, Misleading, Opinion...) and one sentence why. The words come from the picture's file (Annotated.com writes them in when it
-// makes the picture); for an older picture without them, the model reads the picture itself, where it can.
+// sent anywhere), in a window like File a claim: one answer for the whole annotation, the words in its snip
+// and what its poster wrote about them together: a verdict (True, Misleading, Opinion...), then a few short
+// sentences why. The words come from the picture's file (Annotated.com writes them in when it makes the
+// picture); for an older picture without them, the model reads the picture itself, where it can.
 // It needs Chrome's built-in AI (the Prompt API): when that's missing, can't run on this computer, or still
 // has to be downloaded, the window says so (a download starts only when you press its button).
 const AI_TEXT = { expectedInputs: [{ type: 'text', languages: ['en'] }], expectedOutputs: [{ type: 'text', languages: ['en'] }] };
@@ -1574,7 +1579,7 @@ const AI_MSG = {
   download: 'Chrome’s AI model isn’t on this computer yet. Chrome downloads it once (it’s large); after that, checks run here, even offline.',
   getting: (k) => `Getting Chrome’s AI model ready: ${Math.round(Math.max(0, Math.min(1, k)) * 100)}%`,
 };
-const askedAi = new Map(); // post id -> { words, take }: what the AI said (this session)
+const askedAi = new Map(); // post id -> what the AI said (this session)
 let ask = null; // the open window's run: { post, ctrl, session }
 
 const canAsk = (p) => !!p && isAnnotation(p) && p.media_type === 'image' && PATH_OK.test(p.media_path || '');
@@ -1583,14 +1588,7 @@ function openAsk(p) {
   stopAsk();
   const run = { post: p, ctrl: new AbortController(), session: null };
   ask = run;
-  const mine = !!state.uid && p.user_id === state.uid;
-  el.askTakeH.textContent = mine ? 'What you wrote' : `What ${displayName(p)} wrote`;
-  for (const q of [el.askWordsQ, el.askTakeQ]) {
-    q.textContent = '';
-    q.hidden = true;
-  }
-  setAi(el.askWords, '');
-  setAi(el.askTake, '');
+  setAi(el.askAnswer, '');
   el.askGet.hidden = true;
   setAskStatus('Reading the annotation…');
   el.ask.showModal();
@@ -1626,11 +1624,6 @@ function setAi(target, text, { wait = false } = {}) {
     target.textContent = text;
   }
   target.classList.toggle('wait', wait);
-}
-
-function showQuote(q, text) {
-  q.textContent = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 400);
-  q.hidden = !q.textContent;
 }
 
 // What the model says, as plain sentences: no markdown, and no label in front ("Verdict:", "Check:"...),
@@ -1676,17 +1669,19 @@ function hostOf(url) {
 
 // (What's quoted is only ever text to check: quote marks in it can't end the quote.)
 const aiQuote = (t, max) => String(t).slice(0, max).replace(/"{3,}/g, '"');
-const aiWordsPrompt = (words, host) =>
-  `Fact-check the words in this snip${host ? ` (from ${host})` : ''}:\n"""\n${aiQuote(words, AI_WORDS_MAX)}\n"""\n` +
-  'Start with one verdict: True, Mostly true, Misleading, False, or Can’t verify. Then say why in one short sentence.';
-const aiTakePrompt = (note, hasWords) =>
-  `Fact-check what the poster wrote about it:\n"""\n${aiQuote(note, 1000)}\n"""\n` +
-  `Start with one verdict: Accurate, Misleading, False, Opinion, or Can’t verify. Then say why in one short sentence${hasWords ? ', with the snip’s words as context' : ''}.`;
-const AI_IMG_WORDS =
+const AI_ASK =
+  'Start with one verdict for the annotation as a whole: True, Mostly true, Misleading, False, Opinion, or Can’t verify. ';
+// The whole annotation, in one question: the snip's words and what its poster wrote, together.
+function aiPrompt(words, note, host) {
+  const snip = words ? `The words in the snip${host ? ` (from ${host})` : ''}:\n"""\n${aiQuote(words, AI_WORDS_MAX)}\n"""\n` : 'The snip is a picture, with no words in it.\n';
+  const take = note ? `What its poster wrote about it:\n"""\n${aiQuote(note, 1000)}\n"""\n` : 'Its poster wrote nothing about it.\n';
+  const why = words && note ? 'whether the snip’s words hold up, and whether what the poster wrote is fair to them' : words ? 'whether the snip’s words hold up' : 'whether what the poster wrote holds up';
+  return `Fact-check this annotation.\n${snip}${take}${AI_ASK}Then, in two or three short sentences, say ${why}.`;
+}
+const AI_IMG =
   'This picture is an annotation: a snip of a web page, then, under a black line, the take its poster wrote, with a link and the name Annotated.com at the bottom. ' +
-  'Fact-check the words in the snip above the line. Start with one verdict: True, Mostly true, Misleading, False, or Can’t verify. Then say why in one short sentence.';
-const AI_IMG_TAKE =
-  'Now fact-check the take under the line. Start with one verdict: Accurate, Misleading, False, Opinion, or Can’t verify. Then say why in one short sentence.';
+  `Fact-check it as a whole: the words in the snip above the line and the take under it. ${AI_ASK}` +
+  'Then, in two or three short sentences, say whether the snip’s words hold up, and whether the take is fair to them.';
 
 // Waits for a press of "Download the AI model" (the press is what lets Chrome start the download).
 function pressToGet(run) {
@@ -1715,17 +1710,14 @@ async function runAsk(run) {
   const { signal } = ctrl;
   const live = () => ask === run && !signal.aborted;
   // What the annotation says (written into its picture).
-  const r = await fetch(publicUrl(p.media_path), { signal });
+  const r = await fetch(mediaUrl(p.media_path), { signal });
   if (!r.ok) throw new Error(r.status === 404 || r.status === 400 ? 'it isn’t there any more.' : `the server said ${r.status}.`);
   const blob = await r.blob();
   const { words, note } = await fileInfo(blob);
   if (!live()) return;
-  showQuote(el.askWordsQ, words);
-  showQuote(el.askTakeQ, note);
   const seen = askedAi.get(p.id);
   if (seen) {
-    setAi(el.askWords, seen.words);
-    setAi(el.askTake, seen.take);
+    setAi(el.askAnswer, seen);
     return setAskStatus('');
   }
   const api = globalThis.LanguageModel;
@@ -1758,19 +1750,9 @@ async function runAsk(run) {
   }
   if (!live()) return;
   setAskStatus('Checking…');
-  let said;
-  if (byPicture) {
-    said = {
-      words: await streamAi(run.session, [{ role: 'user', content: [{ type: 'text', value: AI_IMG_WORDS }, { type: 'image', value: blob }] }], el.askWords, signal),
-      take: await streamAi(run.session, AI_IMG_TAKE, el.askTake, signal),
-    };
-  } else {
-    said = {};
-    if (words) said.words = await streamAi(run.session, aiWordsPrompt(words, hostOf(p.source)), el.askWords, signal);
-    else setAi(el.askWords, (said.words = 'There are no words in this snip: it’s a picture.'));
-    if (note) said.take = await streamAi(run.session, aiTakePrompt(note, !!words), el.askTake, signal);
-    else setAi(el.askTake, (said.take = 'Nothing was written about it.'));
-  }
+  const said = byPicture
+    ? await streamAi(run.session, [{ role: 'user', content: [{ type: 'text', value: AI_IMG }, { type: 'image', value: blob }] }], el.askAnswer, signal)
+    : await streamAi(run.session, aiPrompt(words, note, hostOf(p.source)), el.askAnswer, signal);
   if (!live()) return;
   askedAi.set(p.id, said);
   setAskStatus('');
@@ -1786,10 +1768,11 @@ function openSource(p) {
   chrome.tabs.create({ url: p.source, active: true }).catch((e) => setBanner('Couldn’t open the link: ' + friendly(e), { ms: 5000 }));
 }
 
-// The right-click menu: Reply, Delete (your own posts: press it twice), Like (or
-// Unlike), Download (a picture or video), Copy (the picture, the video or the words), and on an
-// annotation made with Annotated.com, Go to source link (opens it in a new tab), Ask AI (on a picture),
-// and File a claim (on someone else's post). (When it was posted is on the post itself.)
+// The right-click menu, the things you do most first, in three groups: Reply and Like (or Unlike); then Ask
+// AI (an annotation picture), Go to source link (an annotation made with Annotated.com: opens it in a new
+// tab), Download (a picture or video) and Copy (the picture, the video or the words); and last, apart, File
+// a claim (someone else's post) or Delete (your own: press it twice). (When it was posted is on the post
+// itself.)
 const menu = { post: null, li: null, prev: null, byKeyboard: false, openedAt: 0, armTimer: 0 };
 
 function postOf(li) {
@@ -1823,6 +1806,20 @@ function openMenu(li, x, y, { keyboard = false } = {}) {
   m.querySelector('[data-act="source"]').hidden = !(p.media_path && isWebLink(p.source));
   m.querySelector('[data-act="ask"]').hidden = !canAsk(p);
   m.querySelector('[data-act="claim"]').hidden = !!(state.uid && p.user_id === state.uid);
+  // A line only between two groups that both have something in them.
+  let shown = false;
+  let line = null;
+  for (const n of m.children) {
+    if (n.tagName !== 'BUTTON' && !n.classList.contains('sep')) continue;
+    if (n.classList.contains('sep')) {
+      n.hidden = true;
+      if (shown) line = n;
+    } else if (!n.hidden) {
+      if (line) line.hidden = false;
+      line = null;
+      shown = true;
+    }
+  }
   disarmDelete();
   m.hidden = false;
   // Keep it inside the panel, opening away from the edges.
@@ -2023,13 +2020,13 @@ function autosize() {
 // Like the typing line on the page: up to 280 characters, counted the way X counts them (a link is 23,
 // an emoji or a CJK character 2). The last 20 count down beside your name; past 280 it shows how many to
 // cut, and ↑ waits.
-// Nobody can message everyone: the box is for a reply to an annotation (right-click it → Reply), or a
-// few words with an annotation you're posting. Otherwise it's closed, and says how to reply.
+// Nobody can message everyone: the box is for a reply to an annotation (click it, or right-click it →
+// Reply), or a few words with an annotation you're posting. Otherwise it's closed, and says how to reply.
 function updateSend() {
   const annotation = !!(state.pending && state.pending.source);
   const open = !!state.replyTo || annotation;
   if (el.text.disabled === open) el.text.disabled = !open;
-  const hint = state.replyTo ? 'Write a reply' : annotation ? 'Add some words (if you like)' : state.pending ? 'Only annotations go to everyone: reply to one with this' : 'Right-click an annotation to reply';
+  const hint = state.replyTo ? 'Write a reply' : annotation ? 'Add some words (if you like)' : state.pending ? 'Only annotations go to everyone: reply to one with this' : 'Click an annotation to reply';
   if (el.text.placeholder !== hint) el.text.placeholder = hint;
   const has = el.text.value.trim().length > 0 || !!state.pending;
   const c = countX(el.text.value.trim());
@@ -2319,7 +2316,7 @@ async function send() {
   const body = el.text.value.trim();
   const att = state.pending;
   if (!body && !att) return;
-  if (!state.replyTo && !(att && att.source)) return setBanner('To say something, right-click an annotation and reply.', { ms: 4000 });
+  if (!state.replyTo && !(att && att.source)) return setBanner('To say something, click an annotation and reply to it.', { ms: 4000 });
   if (countX(body).over) return updateSend(); // over 280: trim it first
   state.sending = true;
   el.composer.classList.add('busy');
@@ -2592,6 +2589,17 @@ function wire() {
     const li = e.target.closest('.post');
     if (li) jumpTo(li.dataset.id);
   });
+  // A click on an annotation (anywhere but its links, buttons and video, and not to select its words) starts
+  // your reply to it, as Reply in its menu does. (Its picture also opens full size: see makeMedia.)
+  el.list.addEventListener('click', (e) => {
+    if (e.button !== 0 || e.defaultPrevented || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+    if (e.target.closest('a, button, input, textarea, video, .likes')) return;
+    const sel = getSelection();
+    if (sel && !sel.isCollapsed && sel.toString().trim()) return;
+    const li = e.target.closest('.post.annot');
+    const p = li && state.posts.get(li.dataset.id);
+    if (p && canReply(p)) setReply(p);
+  });
 
   // Paste a picture (Annotated.com's Copy puts one on the clipboard, with where it's from), a video
   // copied in Annotated.com, or a file.
@@ -2639,6 +2647,13 @@ function wire() {
     if ((e.key === 'Enter' || e.key === ' ') && el.results.contains(li)) {
       e.preventDefault();
       return jumpTo(li.dataset.id); // (a search result: to the post in the chat, as a click does)
+    }
+    if (e.key === 'Enter' && li.classList.contains('annot')) {
+      const p = state.posts.get(li.dataset.id);
+      if (p && canReply(p)) {
+        e.preventDefault();
+        return setReply(p); // (as a click does: your reply to it)
+      }
     }
     if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
       e.preventDefault();

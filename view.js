@@ -1,5 +1,5 @@
-// Annotated.com: a picture from the chat, full size, with who posted it, when, and how many have seen it on
-// its top left (the same label as on its card in the chat). The chat opens this tab when you press a
+// Annotated.com: a picture from the chat, full size, with who posted it, when, and how many have seen it
+// across the top of its card, above the picture (the same label as on its card in the chat). The chat opens this tab when you press a
 // picture and closes it when you press the picture again (or another one); Esc closes it too. What to show
 // comes in the address (after #), from the chat: the picture's place in storage and the post's label.
 import { SUPABASE_URL, BUCKET } from './chat-config.js';
