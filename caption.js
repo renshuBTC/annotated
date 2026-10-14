@@ -61,6 +61,12 @@ function graphemes(s) {
   return segmenter ? Array.from(segmenter.segment(s), (x) => x.segment) : Array.from(s);
 }
 
+// Chinese and Japanese break between characters (they don't put spaces between words); a closing mark
+// (、。」 …) never starts a line.
+const CJK = '\\p{sc=Han}\\p{sc=Hiragana}\\p{sc=Katakana}\\u3000-\\u303F\\uFF00-\\uFFEF';
+const WORDS = new RegExp(`\\s*(?:[${CJK}]|[^\\s${CJK}]+)`, 'gu');
+const CLOSING = /^[、。，．：；！？）」』】〉》〕］｝ー…‥・％]/u;
+
 // Greedy word wrap with the browser's own text measurement. Words longer than a line are split
 // between characters; URLs prefer to break after / ? & = . - _ #.
 function wrap(ctx, text, maxW, isUrl) {
@@ -71,7 +77,7 @@ function wrap(ctx, text, maxW, isUrl) {
       out.push('');
       continue;
     }
-    const tokens = isUrl ? para.match(/[^/?&=.\-_#]*[/?&=.\-_#]?/g).filter(Boolean) : para.match(/\s*\S+/g) || [para];
+    const tokens = isUrl ? para.match(/[^/?&=.\-_#]*[/?&=.\-_#]?/g).filter(Boolean) : para.match(WORDS) || [para];
     let line = '';
     const pushLong = (tok) => {
       // Split a token that doesn't fit on a line of its own.
@@ -94,9 +100,16 @@ function wrap(ctx, text, maxW, isUrl) {
       if (fits(line + tok)) {
         line += tok;
       } else {
+        let carry = '';
+        if (!isUrl && CLOSING.test(tok)) {
+          // (The character before a closing mark goes to the next line with it.)
+          const gs = graphemes(line);
+          if (gs.length > 1) carry = gs.pop();
+          line = gs.join('');
+        }
         out.push(line);
         line = '';
-        const t = tok.trimStart();
+        const t = (carry + tok).trimStart();
         if (fits(t)) line = t;
         else pushLong(t);
       }
@@ -133,6 +146,8 @@ export function layoutCaption({ text, source, width }) {
 
   ctx.font = capFont;
   const lines = clean ? wrap(ctx, clean, inner, false) : [];
+  // Written right to left (Hebrew, Arabic...): read that way, from the right (as its first letter says).
+  const rtl = /^[^\p{L}]*[\p{sc=Hebrew}\p{sc=Arabic}\p{sc=Syriac}\p{sc=Thaana}\p{sc=Nko}]/u.test(clean);
   const footer = !!source;
   ctx.font = srcFont;
   // The credit: the logo, a small gap, then the name, on one line. The logo's base sits on the name's
@@ -171,7 +186,7 @@ export function layoutCaption({ text, source, width }) {
   let lastBase = null;
   for (const t of lines) {
     lastBase = y + (m.lineH - (cb.asc + cb.desc)) / 2 + cb.asc;
-    placed.push({ t, x: 0, y: lastBase, font: capFont, color: colors.fg });
+    placed.push(rtl ? { t, x: inner, align: 'right', dir: 'rtl', y: lastBase, font: capFont, color: colors.fg } : { t, x: 0, y: lastBase, font: capFont, color: colors.fg });
     y += m.lineH;
   }
   if (footer) {
@@ -216,6 +231,7 @@ export function drawCaption(ctx, layout, x = 0, y = 0) {
     }
     ctx.font = l.font;
     ctx.fillStyle = l.color;
+    ctx.direction = l.dir || 'ltr';
     ctx.textAlign = l.align || 'left';
     ctx.fillText(l.t, x + layout.metrics.pad + (l.x || 0), y + l.y);
   }

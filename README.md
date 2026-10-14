@@ -45,7 +45,7 @@ Click the icon (or press **Alt+Shift+S**). The bar appears at the top of the pag
 | ⤓ Save | Save it as a PNG or MP4, ready to post on X. |
 | ⧉ Copy | Copy it, to paste into a post or the chat. |
 | **a** Send to the chat | Post it in the chat straight away. It flies off the page into the chat. |
-| ✕ Close | Close the bar and the chat (**Esc** does too). |
+| ✕ Close | Close the bar and the chat (**Esc** does too). With a video you haven't saved yet, press it twice. |
 
 ## The chat
 

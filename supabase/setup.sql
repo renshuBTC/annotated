@@ -15,7 +15,8 @@
 --   * Signing in with X shows your @handle and X photo on your posts and likes. The server fills
 --     them in from the X account you signed in with, so nobody can post under someone else's handle.
 --   * Pictures and videos go in a public "posts" bucket, 50 MB per file at most (the Free plan's limit),
---     named <your id>/<random id>.<type>, at most 40 an hour. A file a post uses can't be replaced.
+--     named <your id>/<random id>.<type>, at most 40 an hour. A post's file has to be uploaded first,
+--     each file is one post's, and a file a post uses can't be replaced (nor one a claim keeps, deleted).
 --   * Anyone signed in can file a claim on someone else's post (it uses their work beyond fair use).
 --     Claims are private: only the project's owners read them (Table Editor → claims).
 
@@ -103,7 +104,7 @@ immutable
 set search_path = ''
 as $$
   select coalesce(nullif(btrim(regexp_replace(regexp_replace(
-    regexp_replace(name, '[\u00AD\u034F\u115F\u1160\u17B4\u17B5\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u206A-\u206F\u2800\u3164\uFEFF\uFFA0]', '', 'g'),
+    regexp_replace(name, '[\u00AD\u034F\u115F\u1160\u17B4\u17B5\u180E\u200B-\u200F\u202A-\u202E\u2060-\u206F\u2800\u3164\uFEFF\uFFA0]', '', 'g'),
     '[@＠﹫]', '', 'g'),
     '[[:space:]]+', ' ', 'g')), ''), 'Someone')
 $$;
@@ -125,6 +126,17 @@ $$;
 create index if not exists messages_created_at_idx on public.messages (created_at desc);
 create index if not exists messages_user_created_idx on public.messages (user_id, created_at desc);
 create index if not exists messages_media_path_idx on public.messages (media_path) where media_path is not null;
+-- Each file is one post's (when no two posts share one already: then it stays as it is, and says so).
+do $$
+begin
+  if exists (select media_path from public.messages where media_path is not null group by media_path having count(*) > 1) then
+    raise notice 'Some posts share a file: each file isn''t made one post''s yet.';
+  else
+    create unique index if not exists messages_media_path_key on public.messages (media_path) where media_path is not null;
+    drop index if exists public.messages_media_path_idx;
+  end if;
+end;
+$$;
 
 -- Only what the chat needs (new tables aren't exposed automatically): everyone reads, signed-in
 -- people post and delete. Nobody updates. The rules below then narrow it to your own posts.
@@ -198,6 +210,14 @@ begin
   new.created_at := now();
   select p.handle, p.avatar into new.x_handle, new.x_avatar from public.chat_x_profile(new.user_id) p;
   new.name := public.chat_clean_name(new.name);
+  -- No direction overrides in what's written (with them, a link could show one address and open another).
+  new.body := regexp_replace(new.body, '[\u202A-\u202E\u2066-\u2069]', '', 'g');
+  -- A picture or video has to be uploaded first, by you, at that place.
+  if new.media_path is not null and not exists (
+    select 1 from storage.objects o where o.bucket_id = 'posts' and o.name = new.media_path and o.owner_id = new.user_id::text
+  ) then
+    raise exception 'Upload the picture or video first.' using errcode = 'P0001';
+  end if;
   new.reply_name := null;
   new.reply_text := null;
   new.reply_media := null;
@@ -444,16 +464,37 @@ $$;
 revoke all on function public.chat_recent_uploads() from public, anon;
 grant execute on function public.chat_recent_uploads() to authenticated;
 
--- Whether no post uses a file at this place (one that does can't be deleted and uploaded again as
--- something else: nobody can change a post).
-create or replace function public.chat_path_unused(path text)
+-- Whether a claim keeps a file (a copy of the post it's about): it isn't deleted or replaced then.
+create or replace function public.chat_file_kept(path text)
 returns boolean
-language sql
+language plpgsql
 stable
 security definer
 set search_path = ''
 as $$
-  select not exists (select 1 from public.messages m where m.media_path = path)
+begin
+  return exists (select 1 from public.claims c where c.post_media = path);
+exception
+  when undefined_table then
+    return false; -- (no claims yet: set up below)
+end;
+$$;
+revoke all on function public.chat_file_kept(text) from public, anon;
+grant execute on function public.chat_file_kept(text) to authenticated;
+
+-- Whether no post uses a file at this place (one that does can't be deleted and uploaded again as
+-- something else: nobody can change a post).
+create or replace function public.chat_path_unused(path text)
+returns boolean
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+begin
+  return not exists (select 1 from public.messages m where m.media_path = path)
+    and not public.chat_file_kept(path);
+end;
 $$;
 revoke all on function public.chat_path_unused(text) from public, anon;
 grant execute on function public.chat_path_unused(text) to authenticated;
@@ -480,7 +521,7 @@ create policy "See your own files" on storage.objects
 drop policy if exists "Delete your own files" on storage.objects;
 create policy "Delete your own files" on storage.objects
   for delete to authenticated
-  using (bucket_id = 'posts' and owner_id = (select auth.jwt() ->> 'sub'));
+  using (bucket_id = 'posts' and owner_id = (select auth.jwt() ->> 'sub') and not public.chat_file_kept(name));
 
 -- 5) Claims ------------------------------------------------------------------------------------------
 

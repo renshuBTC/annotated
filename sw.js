@@ -48,15 +48,19 @@ chrome.sidePanel.onOpened?.addListener(async (info) => {
 // The chat closed (its ×, Chrome's side panel button, Esc in the chat): the bar goes too, in every tab
 // of that window. (Every tab is asked: this worker may have been restarted and forgotten which have it;
 // a tab without the bar just says so.)
-chrome.sidePanel.onClosed?.addListener(async (info) => {
-  if (!info || info.windowId == null) return;
-  const tabs = await chrome.tabs.query({ windowId: info.windowId }).catch(() => []);
+chrome.sidePanel.onClosed?.addListener((info) => info && info.windowId != null && closeBarsIn(info.windowId));
+async function closeBarsIn(windowId) {
+  const tabs = await chrome.tabs.query({ windowId }).catch(() => []);
   for (const t of tabs) {
     chrome.tabs.sendMessage(t.id, { type: 'snip:toggle', mode: 'chat-closed' }, { frameId: 0 }).then(
       (r) => r && r.handled === false && barTabs.delete(t.id),
       () => barTabs.delete(t.id)
     );
   }
+}
+
+chrome.tabs.onAttached.addListener((tabId, info) => {
+  chrome.tabs.sendMessage(tabId, { type: 'snip:window', windowId: info.newWindowId }, { frameId: 0 }).catch(() => {});
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
@@ -149,7 +153,11 @@ async function openBar(tab, mode, { ensure, quiet }) {
   let shotError = null;
   if (mode !== 'bar') {
     try {
-      shot = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+      // (Only while that tab is the one in front: otherwise it would be a picture of another tab.)
+      const front = async () => !!(await chrome.tabs.get(tab.id).catch(() => null) || {}).active;
+      if (!(await front())) throw new Error('not in front');
+      shot = await capture(tab.windowId);
+      if (!(await front())) shot = null;
     } catch (e) {
       shotError = errText(e);
     }
@@ -171,12 +179,14 @@ async function openBar(tab, mode, { ensure, quiet }) {
   setTimeout(() => sessions.delete(token), 5 * 60 * 1000);
 
   try {
-    await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds: [0] }, files: ['content.js'] });
+    await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds: [0] }, files: ['content.js'], injectImmediately: true });
     await chrome.tabs.sendMessage(tab.id, { type: 'snip:open', token, mode }, { frameId: 0 });
     barTabs.add(tab.id);
   } catch (e) {
     sessions.delete(token);
     const msg = errText(e);
+    // (The tab closed, or went to another page, meanwhile: there's nothing to explain.)
+    if (/no tab with id|was removed|tab was closed/i.test(msg) || !(await chrome.tabs.get(tab.id).catch(() => null))) return;
     if (quiet) {
       // Chrome hasn't let Annotated.com onto this page yet (that takes a press of the icon here): the
       // chat says so.
@@ -188,6 +198,19 @@ async function openBar(tab, mode, { ensure, quiet }) {
     else if (/gallery cannot be scripted|webstore/i.test(msg)) kind = 'store';
     else if (/file:\/\//i.test(msg)) kind = 'file';
     showBlocked(tab, kind, kind === 'script' ? msg : '');
+  }
+}
+
+// A picture of the window's page. Chrome takes at most two a second (two tabs at once, or 📷 pressed on
+// and off quickly): then it tries again a moment later, for up to about a second and a half.
+async function capture(windowId) {
+  for (let tries = 0; ; tries++) {
+    try {
+      return await chrome.tabs.captureVisibleTab(windowId, { format: 'png' });
+    } catch (e) {
+      if (tries >= 3 || !/MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND/.test(errText(e))) throw e;
+      await new Promise((r) => setTimeout(r, 450));
+    }
   }
 }
 
@@ -233,7 +256,9 @@ async function audioOff(tabId) {
   audioTabs.delete(tabId);
   if (audioTabs.size) return;
   try {
-    if (chrome.offscreen && (await chrome.offscreen.hasDocument())) await chrome.offscreen.closeDocument();
+    if (!chrome.offscreen || !(await chrome.offscreen.hasDocument())) return;
+    if (audioTabs.size || playerReady) return; // (another tab's recording started meanwhile: it stays)
+    await chrome.offscreen.closeDocument();
   } catch {}
 }
 
@@ -294,6 +319,12 @@ async function handle(msg, sender) {
       if (tabId != null) barTabs.add(tabId);
       return { ok: true };
     }
+    case 'snip:chatClosing': {
+      // The chat closing itself (Esc there): the bars in its window go too. (Chrome 142 and later also
+      // say so when the side panel closes; this covers Chrome before that.)
+      if (msg.windowId != null) closeBarsIn(msg.windowId);
+      return { ok: true };
+    }
     case 'snip:zoom': {
       // The page's zoom: the overlay's bar undoes it, so it keeps its size on screen.
       return { zoom: await chrome.tabs.getZoom(tabId) };
@@ -303,7 +334,7 @@ async function handle(msg, sender) {
       // front (otherwise the picture would be of another tab).
       const t = await chrome.tabs.get(tabId);
       if (!t.active) return { error: 'Switch back to this tab to take its picture.' };
-      const shot = await chrome.tabs.captureVisibleTab(t.windowId, { format: 'png' });
+      const shot = await capture(t.windowId);
       if (!(await chrome.tabs.get(tabId)).active) return { error: 'Switch back to this tab to take its picture.' };
       return { shot };
     }

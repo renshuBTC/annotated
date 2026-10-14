@@ -92,7 +92,7 @@ function show() {
     t.dateTime = when.toISOString();
     t.title = fullFmt.format(when);
     w.append(t);
-    const v = Number(p.views);
+    const v = typeof p.views === 'number' ? p.views : NaN; // (not known: nothing shown, as on its card)
     if (Number.isFinite(v) && v >= 0) w.append(' · ', node('b', '', viewCount(v)), v === 1 ? ' View' : ' Views');
     meta.append(w);
   }

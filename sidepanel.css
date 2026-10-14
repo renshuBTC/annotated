@@ -115,7 +115,7 @@ time { flex: none; color: var(--ink); font-size: var(--small); font-variant-nume
 .views b { color: var(--ink); font-weight: 700; }
 .body { grid-column: 2; min-width: 0; }
 .text { margin: 1px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-.text a { color: inherit; text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 2px; }
+.text a { color: inherit; text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 2px; unicode-bidi: isolate; direction: ltr; }
 .text a:hover { text-decoration-color: var(--ink); }
 
 

@@ -377,14 +377,18 @@ export function planVideo(region, capH, nativeScale) {
 
 async function pickFinalEncoder(W, H, fps, cap = Infinity) {
   const bitrate = Math.round(Math.min(cap, clamp(W * H * fps * 0.25, X.videoBitrate[0], X.videoBitrate[1])));
-  const base = { width: W, height: H, bitrate, framerate: fps, latencyMode: 'quality', bitrateMode: 'variable' };
-  const avc = await firstSupportedVideoConfig([
-    { ...base, codec: avcCodec('6400', W, H, fps, bitrate), avc: { format: 'avc' } },
-    { ...base, codec: avcCodec('4d00', W, H, fps, bitrate), avc: { format: 'avc' } },
-    { ...base, codec: avcCodec('4200', W, H, fps, bitrate), avc: { format: 'avc' } },
-  ]);
+  // With a size cap, a steady bitrate where the browser can (a varying one can run well over it).
+  const modes = cap < Infinity ? ['constant', 'variable'] : ['variable'];
+  const configs = (codecs) => modes.flatMap((bitrateMode) => codecs.map((c) => ({ width: W, height: H, bitrate, framerate: fps, latencyMode: 'quality', bitrateMode, ...c })));
+  const avc = await firstSupportedVideoConfig(
+    configs([
+      { codec: avcCodec('6400', W, H, fps, bitrate), avc: { format: 'avc' } },
+      { codec: avcCodec('4d00', W, H, fps, bitrate), avc: { format: 'avc' } },
+      { codec: avcCodec('4200', W, H, fps, bitrate), avc: { format: 'avc' } },
+    ])
+  );
   if (avc) return { config: avc, muxCodec: 'avc', bitrate };
-  const vp9 = await firstSupportedVideoConfig([{ ...base, codec: 'vp09.00.51.08' }]);
+  const vp9 = await firstSupportedVideoConfig(configs([{ codec: 'vp09.00.51.08' }]));
   if (vp9) return { config: vp9, muxCodec: 'vp9', bitrate, warning: 'This browser cannot make H.264 video, so the file uses VP9. X may not accept it.' };
   throw new Error('This browser cannot encode video.');
 }
@@ -403,8 +407,13 @@ export async function exportVideo({ rec, region, layout, highlights = [], onProg
   const nativeScale = rec.video.width / region.w;
   const plan = planVideo(region, layout.height, nativeScale);
   const { W, H } = plan;
-  // A size cap (the chat's file limit): a lower bitrate, so the whole file fits with its sound.
-  const cap = maxBytes ? Math.max(4e5, (maxBytes * 8 * 0.85) / Math.max(1, durationUs / 1e6) - 1.6e5) : Infinity;
+  const useAudio = rec.audio && rec.audio.codec === 'aac' && rec.audio.chunks.length;
+  // Whole audio frames only, all ending before the video does (so the file never runs past 2:20).
+  const audioChunks = useAudio ? rec.audio.chunks.filter((c) => c.timestamp >= 0 && c.timestamp + (c.duration || 0) <= durationUs) : [];
+  // A size cap (the chat's file limit): a lower bitrate, so the whole file fits with its sound (the sound's
+  // real size, and some room to spare).
+  const audioBytes = audioChunks.reduce((n, c) => n + c.data.byteLength, 0);
+  const cap = maxBytes ? Math.max(4e5, ((maxBytes * 0.88 - audioBytes) * 8) / Math.max(1, durationUs / 1e6)) : Infinity;
   const enc = await pickFinalEncoder(W, H, fps, cap);
 
   // Caption layer, drawn once.
@@ -415,10 +424,9 @@ export async function exportVideo({ rec, region, layout, highlights = [], onProg
     drawCaption(cctx, layout, 0, 0);
   }
 
-  const useAudio = rec.audio && rec.audio.codec === 'aac' && rec.audio.chunks.length;
   const notes = [];
   if (enc.warning) notes.push(enc.warning);
-  if (rec.audio && rec.audio.codec !== 'aac') notes.push('This browser cannot make AAC audio, so the video was saved without sound.');
+  if (rec.audio && rec.audio.codec !== 'aac') notes.push('This browser can’t make AAC sound, so the video has no sound.');
 
   const muxer = new Muxer({
     target: new ArrayBufferTarget(),
@@ -429,8 +437,6 @@ export async function exportVideo({ rec, region, layout, highlights = [], onProg
   });
 
   // Audio is copied as-is (no re-encode), interleaved with the video as it is written.
-  // Whole audio frames only, all ending before the video does (so the file never runs past 2:20).
-  const audioChunks = useAudio ? rec.audio.chunks.filter((c) => c.timestamp >= 0 && c.timestamp + (c.duration || 0) <= durationUs) : [];
   let ai = 0;
   let audioMetaSent = false;
   const pumpAudio = (untilUs) => {
@@ -559,7 +565,7 @@ export function previewMp4(rec) {
     target: new StreamTarget({
       onData: (data, position) => {
         if (position !== size) throw new Error('Unexpected write position in preview.');
-        parts.push(data.slice());
+        parts.push(data); // (each piece is its own copy already)
         size += data.byteLength;
       },
     }),

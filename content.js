@@ -56,6 +56,11 @@
       reply({ open: !!(ui && ui.ready) });
       return false;
     }
+    if (msg.type === 'snip:window') {
+      if (ui && ui.ready) ui.port.postMessage({ type: 'window', windowId: msg.windowId });
+      reply({ ok: true });
+      return false;
+    }
     if (msg.type === 'snip:open') {
       if (ui) teardown();
       open(msg.token, msg.mode);
@@ -124,8 +129,9 @@
       visibility: 'visible',
     });
     root.append(frame);
-    // (Inside the page's open modal dialog, if it has one: see followDialogs.)
-    const modal = modalDialog();
+    // (Inside the page's open modal dialog, if it has one: see followDialogs. Only where Chrome can move
+    // it out again without reloading it.)
+    const modal = 'moveBefore' in Element.prototype ? modalDialog() : null;
     (modal || document.documentElement).append(host);
     scrollbarsOn();
     try {
@@ -143,19 +149,20 @@
     if (modal) inDialog(modal);
     ui.dialogs = new MutationObserver(followDialogs);
     ui.dialogs.observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['open'] });
+    window.addEventListener('focusin', onFocusIn, true); // (a dialog in a web component: focus goes into it)
     if (fromIcon) applyHole();
     channel.port1.onmessage = (e) => onUiMessage(e.data);
-    frame.addEventListener(
-      'load',
-      () => {
-        frame.contentWindow.postMessage({ type: 'annotated-snip:hello', token }, EXT_ORIGIN, [channel.port2]);
-        if (fromIcon) return;
-        try {
-          frame.focus();
-        } catch {}
-      },
-      { once: true }
-    );
+    let loads = 0;
+    frame.addEventListener('load', () => {
+      // Loaded again: the page moved the overlay (with the dialog it was in, say) and it started over,
+      // with nothing to talk to. It's closed properly rather than left on the page.
+      if (loads++) return ui && ui.frame === frame && closedHere();
+      frame.contentWindow.postMessage({ type: 'annotated-snip:hello', token }, EXT_ORIGIN, [channel.port2]);
+      if (fromIcon) return;
+      try {
+        frame.focus();
+      } catch {}
+    });
 
     window.addEventListener('resize', onResize, true);
     document.addEventListener('fullscreenchange', onFullscreen, true);
@@ -247,8 +254,18 @@
     if (!ui) return;
     const d = modalDialog();
     if (d === ui.dialog && (!d || ui.host.parentNode === d)) return;
+    if (!d && ui.dialog && ui.dialog.isConnected && ui.dialog.matches(':modal')) return; // (one in a web component)
     moveHost(d || document.documentElement);
     inDialog(d && ui.host.parentNode === d ? d : null);
+  }
+  // A modal dialog inside a web component (the page's own observer can't see into it): found as focus
+  // goes into it.
+  function onFocusIn(e) {
+    if (!ui || !e.composedPath) return;
+    const d = e.composedPath().find((n) => n && n.tagName === 'DIALOG');
+    if (!d || d === ui.dialog || !d.matches(':modal')) return;
+    moveHost(d);
+    if (ui.host.parentNode === d) inDialog(d);
   }
 
   // The overlay went without the overlay saying so (the page left or removed it): tell the worker, so
@@ -279,6 +296,7 @@
     ui = null;
     if (dialogs) dialogs.disconnect();
     if (dialog) dialog.removeEventListener('beforetoggle', onDialogToggle);
+    window.removeEventListener('focusin', onFocusIn, true);
     scrollbarsOff();
     clearInterval(watchdog);
     if (guard) guard.disconnect();
@@ -309,7 +327,7 @@
     // What the page's own scrollbars inside it get from the page (they keep it).
     let inner = 'auto';
     try {
-      inner = getComputedStyle(root).scrollbarColor || 'auto';
+      inner = getComputedStyle(document.body || root).scrollbarColor || 'auto';
     } catch {}
     sb = { style: document.createElement('style'), timer: 0, near: false, shown: true, inner };
     sb.style.setAttribute('data-annotated', 'scrollbar');
@@ -327,7 +345,7 @@
     if (!sb || sb.shown === show) return;
     sb.shown = show;
     const color = show ? 'rgba(128, 128, 128, 0.6) transparent' : 'transparent transparent';
-    sb.style.textContent = `html{scrollbar-color:${color}!important}:where(html *){scrollbar-color:${sb.inner}}`;
+    sb.style.textContent = `html{scrollbar-color:${color}!important}:where(body){scrollbar-color:${sb.inner}}`;
   }
   function scrollbarSeen() {
     paintScrollbar(true);
@@ -423,7 +441,17 @@
     if (!ui || ui.hole || !ui.only || e.key !== 'Escape' || !e.isTrusted || e.defaultPrevented || e.repeat) return;
     const path = e.composedPath ? e.composedPath() : [e.target];
     if (path.includes(ui.host) || isEditable(path[0])) return;
+    if (pagePopupOpen()) return; // (that Esc closes the page's own pop-up)
     ui.port.postMessage({ type: 'key', key: 'Escape' });
+  }
+
+  // The page has a pop-up of its own open (a dialog, a menu): Esc is for that.
+  function pagePopupOpen() {
+    try {
+      if (modalDialog()) return true;
+      for (const p of document.querySelectorAll(':popover-open')) if (p !== (ui && ui.host)) return true;
+    } catch {}
+    return false;
   }
 
   // While recording, a click into a video player embedded in the page (another site's frame) would
@@ -675,6 +703,8 @@
     if (r.width < 32 || r.height < 18) return false;
     if (r.width * r.height > area * 0.97) return false;
     if (SEMANTIC.has(el.tagName) || el.matches(SEMANTIC_SEL)) return true;
+    // A web component with insides of its own (a player, a card), big enough to mean something.
+    if (el.shadowRoot && r.width >= 120 && r.height >= 68) return true;
     const cs = getComputedStyle(el);
     if (cs.boxShadow && cs.boxShadow !== 'none') return true;
     if (parseFloat(cs.borderTopWidth) > 0 && cs.borderTopStyle !== 'none' && parseFloat(cs.borderLeftWidth) > 0) return true;
@@ -690,12 +720,15 @@
   }
 
   function hitElement(x, y) {
-    let list = document.elementsFromPoint(x, y).filter((e) => !ui || (e !== ui.host && !ui.host.contains(e)));
-    let el = list[0] || null;
-    // Step into open shadow roots (custom players, web components).
+    const ours = (e) => !!ui && (e === ui.host || ui.host.contains(e));
+    let el = document.elementsFromPoint(x, y).find((e) => !ours(e)) || null;
+    // Step into open shadow roots (custom players, web components): the topmost thing in the component's
+    // own tree. Never the overlay (it can be in there too, with a pop-up of the component's).
     for (let i = 0; el && el.shadowRoot && i < 5; i++) {
-      const inner = el.shadowRoot.elementsFromPoint(x, y).find((e) => e !== el);
-      if (!inner || inner === el) break;
+      const sr = el.shadowRoot;
+      const host = el;
+      const inner = sr.elementsFromPoint(x, y).find((e) => e !== host && !ours(e) && sr.contains(e));
+      if (!inner) break;
       el = inner;
     }
     return el;
@@ -753,7 +786,9 @@
   // order: [word, x, y (its middle), bottom, block, a space after it, not at its text's start], in the
   // overlay's units.
   const COVERING = new Set(['IMG', 'VIDEO', 'CANVAS', 'IFRAME', 'EMBED', 'OBJECT']);
-  function wordList(rect, maxWords = 20000) {
+  // (On a page too big to go through in a moment, none are given (null), and the overlay asks again for
+  // just your area when you save; `partial` gives what was found instead.)
+  function wordList(rect, maxWords = 20000, { partial = false } = {}) {
     if (!rect) return [];
     const k = ui ? ui.scale : 1;
     const L = rect.x * k;
@@ -853,7 +888,9 @@
       return set;
     };
     const under = (p, x, y) => {
-      if (style(p).pointerEvents === 'none') return false; // (can't tell: what's over it would be found, not it)
+      // (Text that can't be pointed at, a label over a field say, can't be told from what's under it:
+      // it's taken as seen. Unless the whole page is like that because a pop-up holds it: then it's asked.)
+      if (style(p).pointerEvents === 'none' && style(document.body || document.documentElement).pointerEvents !== 'none') return false;
       const root = p.getRootNode();
       let stack;
       try {
@@ -866,27 +903,77 @@
         if (hold.has(e)) return false; // down to the word's own element: nothing over it
         if (ui && e === ui.host) continue;
         if (hides(e)) return true;
+        // (A custom element can have its background inside its own shadow tree: a header that stays put.)
+        const sr = e.shadowRoot;
+        if (sr) {
+          try {
+            for (const s of sr.elementsFromPoint(x, y)) if (s !== e && sr.contains(s) && hides(s)) return true;
+          } catch {}
+        }
       }
       return false;
     };
+    // Text you can't read in the picture: blurred (behind a paywall, say), or shown as dots.
+    const blurs = new Map();
+    const blurred = (e) => {
+      if (!e || e.nodeType !== 1) return false;
+      let b = blurs.get(e);
+      if (b === undefined) {
+        const m = /blur\(([\d.]+)px\)/.exec(style(e).filter || '');
+        b = (m && parseFloat(m[1]) >= 2) || blurred(up(e));
+        blurs.set(e, b);
+      }
+      return b;
+    };
+    const unreadable = (p) => {
+      const dots = style(p).webkitTextSecurity;
+      return (dots && dots !== 'none') || blurred(p);
+    };
     const out = [];
-    let budget = 60000; // nodes looked at, at most
+    let budget = 60000; // places looked at, at most
+    let over = false;
     const take = (n) => {
       const p = n.parentElement;
-      if (!p || !visible(p)) return;
-      const pr = p.getBoundingClientRect();
-      if (pr.right < L || pr.left > R || pr.bottom < T || pr.top > B) return;
+      if (!p || !visible(p) || unreadable(p)) return;
+      // Where this text is, all of it (most of a page's text is nowhere near the area).
+      range.selectNodeContents(n);
+      const nb = range.getBoundingClientRect();
+      if (!nb.width || nb.right < L || nb.left > R || nb.bottom < T || nb.top > B) return;
       const clip = contentClip(p);
       if (clip && (clip.r <= clip.l || clip.b <= clip.t || clip.r < L || clip.l > R || clip.b < T || clip.t > B)) return;
       const block = blockOf(p);
       const re = /\S+/g;
       const found = [];
-      let m;
-      while ((m = re.exec(n.data)) && out.length + found.length < maxWords) {
+      const measure = (m) => {
         range.setStart(n, m.index);
         range.setEnd(n, m.index + m[0].length);
-        const b = range.getClientRects()[0];
+        return range.getClientRects()[0];
+      };
+      // A very long text (a log, say): it's looked up from the first line in the area, and left at the
+      // last, rather than measured word by word all the way through.
+      const long = n.data.length > 3000 && style(p).writingMode === 'horizontal-tb';
+      if (long) {
+        let lo = 0;
+        let hi = n.data.length;
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          re.lastIndex = mid;
+          const m = re.exec(n.data);
+          if (!m) {
+            hi = mid;
+            continue;
+          }
+          const b = measure(m);
+          if (b && b.bottom < T) lo = m.index + m[0].length;
+          else hi = mid;
+        }
+        re.lastIndex = lo;
+      }
+      let m;
+      while ((m = re.exec(n.data)) && out.length + found.length < maxWords) {
+        const b = measure(m);
         if (!b || b.width < 1) continue;
+        if (long && b.top > B) break; // (the rest of it is further down)
         const cx = b.left + b.width / 2;
         const cy = b.top + b.height / 2;
         if (cx < L || cx > R || cy < T || cy > B) continue;
@@ -894,36 +981,67 @@
         const end = m.index + m[0].length;
         found.push({ w: [m[0], cx / k, cy / k, b.bottom / k, blockId(block), end < n.data.length ? 1 : 0, m.index > 0 ? 1 : 0], cx, cy });
       }
-      // What's over them: asked at both ends of each line (and in between only when those differ).
+      // What's over them: asked for every third word of each line and its last (a pop-up in the middle
+      // of a line is found too); where anything is over a line, for each of its words.
       for (let i = 0; i < found.length; ) {
         let j = i;
         while (j + 1 < found.length && Math.abs(found[j + 1].cy - found[i].cy) < 1) j++;
-        const a = under(p, found[i].cx, found[i].cy);
-        const z = j > i ? under(p, found[j].cx, found[j].cy) : a;
-        for (let x = i; x <= j; x++) {
-          const hid = x === i ? a : x === j ? z : a === z ? a : under(p, found[x].cx, found[x].cy);
-          if (!hid) out.push(found[x].w);
-        }
+        const asked = new Map();
+        const ask = (x) => {
+          if (!asked.has(x)) asked.set(x, under(p, found[x].cx, found[x].cy));
+          return asked.get(x);
+        };
+        let any = ask(j);
+        for (let x = i; x < j; x += 3) if (ask(x)) any = true;
+        for (let x = i; x <= j; x++) if (!(any && ask(x))) out.push(found[x].w);
         i = j + 1;
       }
     };
+    // Far from the area: nothing in it is there (its words may spill a little out of its box). Except
+    // what's on top in the area and everything it's inside: a bar that stays put can be in a footer far
+    // down the page, say, and a pop-up in an empty holder at its end.
+    const SPILL = 600;
+    const near = new Set();
+    for (let i = 0; i < 9; i++) {
+      for (let j = 0; j < 9; j++) {
+        let e = null;
+        try {
+          e = hitElement(L + ((R - L) * (i + 0.5)) / 9, T + ((B - T) * (j + 0.5)) / 9);
+        } catch {}
+        for (; e && !near.has(e); e = parentOf(e)) near.add(e);
+      }
+    }
+    const far = (e) => {
+      if (near.has(e)) return false;
+      const r = e.getBoundingClientRect();
+      if (!r.width || !r.height) return false; // (no box of its own: display: contents, or a holder for what's put elsewhere)
+      return r.bottom < T - SPILL || r.top > B + SPILL || r.right < L - SPILL || r.left > R + SPILL;
+    };
     const walk = (root) => {
       const w = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
-        acceptNode: (n) =>
-          n.nodeType === Node.ELEMENT_NODE && (NO_WORDS.has(n.tagName) || (ui && n === ui.host)) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+        acceptNode: (n) => {
+          if (n.nodeType !== Node.ELEMENT_NODE) return NodeFilter.FILTER_ACCEPT;
+          if (NO_WORDS.has(n.tagName) || (ui && n === ui.host) || far(n)) return NodeFilter.FILTER_REJECT;
+          return NodeFilter.FILTER_ACCEPT;
+        },
       });
-      for (let n = w.nextNode(); n && out.length < maxWords && --budget > 0; n = w.nextNode()) {
+      for (let n = w.nextNode(); n && out.length < maxWords; n = w.nextNode()) {
+        if (--budget <= 0) {
+          over = true;
+          return;
+        }
         if (n.nodeType === Node.TEXT_NODE) {
           if (n.data.trim()) take(n);
         } else if (n.shadowRoot) {
           walk(n.shadowRoot);
+          if (over) return;
         }
       }
     };
     try {
       if (document.body) walk(document.body);
     } catch {}
-    return out;
+    return over && !partial ? null : out;
   }
 
   // Words as text: a new line for a new block lower down; a space where the page has one (a link's
@@ -947,7 +1065,7 @@
 
   function wordsIn(rect, max = 4000) {
     if (!rect) return '';
-    return joinWords(wordList(rect, 2000), null, max); // (2000 words: well over the 4000 letters kept)
+    return joinWords(wordList(rect, 2000, { partial: true }), null, max); // (2000 words: well over the 4000 letters kept)
   }
 
   /* ---------- highlighting text in your snip, like selecting it ---------- */
@@ -1141,6 +1259,18 @@
     if (/^eyJ[\w-]{6,}\.[\w-]+\.[\w-]*$/.test(v)) return true; // a JWT
     return v.length >= 40 && /^[\w\-.~+/=]+$/.test(v) && /\d/.test(v) && /[a-z]/i.test(v); // a long key
   }
+  // An email address: never in a public link (?email=…, ?authuser=…, a path like /users/jane@…).
+  const EMAIL = /[^\s@/?#&=;:]+@[^\s@/?#&=;:]+\.[a-z]{2,}/i;
+  // A part of the path right after one of these words is a one-time code (/reset-password/9f86…,
+  // /invite/AbC123…); whole words only (an /author/ isn't /auth/).
+  const CODE_BEFORE = new Set(['reset', 'password', 'passwd', 'verify', 'verification', 'confirm', 'confirmation', 'activate', 'activation', 'invite', 'invitation', 'magic', 'token', 'unsubscribe', 'login', 'signin', 'auth', 'oauth', 'sso', 'otp']);
+  function codeAfter(seg) {
+    return String(seg)
+      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .some((w) => CODE_BEFORE.has(w));
+  }
 
   function cleanUrl(href) {
     let u;
@@ -1161,8 +1291,25 @@
         return x;
       }
     };
+    const raw = (x) => {
+      try {
+        return decodeURIComponent(x);
+      } catch {
+        return x;
+      }
+    };
     // A login kept in the path itself (/page;jsessionid=…) goes too.
     if (u.pathname.includes(';')) u.pathname = u.pathname.replace(/;([^/;=]*)=([^/;]*)/g, (all, n, v) => (secretName(dec(n)) || secretValue(dec(v)) ? '' : all));
+    // So does the path from an email address, a JWT or a one-time code in it onwards.
+    const segs = u.pathname.split('/');
+    for (let i = 1; i < segs.length; i++) {
+      const seg = raw(segs[i]);
+      const code = seg.length >= 16 && /^[\w\-.~+=]+$/.test(seg) && /\d/.test(seg) && /[a-z]/i.test(seg) && codeAfter(raw(segs[i - 1]));
+      if (EMAIL.test(seg) || /^eyJ[\w-]{6,}\.[\w-]+\.[\w-]*$/.test(seg) || code) {
+        u.pathname = segs.slice(0, i).join('/') + '/';
+        break;
+      }
+    }
     const kept = u.search
       .slice(1)
       .split('&')
@@ -1171,13 +1318,15 @@
         const eq = pair.indexOf('=');
         const name = dec(eq < 0 ? pair : pair.slice(0, eq));
         const value = eq < 0 ? '' : dec(pair.slice(eq + 1));
-        return !(TRACKING.test(name) || secretName(name) || secretValue(value));
+        const rawValue = eq < 0 ? '' : raw(pair.slice(eq + 1)); // (a key with + in it: as written)
+        return !(TRACKING.test(name) || secretName(name) || secretValue(value) || secretValue(rawValue) || EMAIL.test(name) || EMAIL.test(value));
       });
     u.search = kept.length ? '?' + kept.join('&') : '';
     // After #: a highlighted quote (#:~:text=…) or a real anchor on this page stays; anything else goes
     // (some sites keep keys there: #access_token=…, file-sharing links' decryption keys).
     const h = u.hash;
-    if (h && !h.startsWith('#:~:')) {
+    if (h && EMAIL.test(raw(h))) u.hash = '';
+    else if (h && !h.startsWith('#:~:')) {
       let anchor = false;
       try {
         const id = decodeURIComponent(h.slice(1));
@@ -1245,13 +1394,14 @@
     }
 
     if (host === 'youtube.com' || host === 'music.youtube.com' || host === 'youtu.be') {
-      const id = host === 'youtu.be' ? u.pathname.slice(1).split('/')[0] : u.searchParams.get('v');
+      let id = host === 'youtu.be' ? u.pathname.slice(1).split('/')[0] : u.searchParams.get('v');
+      if (id && !/^[\w-]{6,20}$/.test(id)) id = null; // (a video's id only: nothing else rides along)
       const shorts = u.pathname.match(/^\/shorts\/([\w-]{6,})/);
       if (id || shorts) {
         let url = id ? `https://www.youtube.com/watch?v=${id}` : `https://www.youtube.com/shorts/${shorts[1]}`;
         if (id) {
           let t = opts.time;
-          if (t == null) {
+          if (t == null && !opts.frozen) {
             const v = mainVideoIn(rect);
             if (v && v.currentTime > 1) t = v.currentTime;
           }

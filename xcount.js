@@ -29,7 +29,12 @@ function weightOf(cp) {
 
 let EMOJI;
 try {
-  EMOJI = new RegExp('\\p{RGI_Emoji}', 'gv');
+  // (Also an emoji that is one already with the "as an emoji" mark after it, ⚡️ ☕️ ⭐️ as phones type them:
+  // still one emoji.)
+  EMOJI = new RegExp(
+    '[\\u231A\\u231B\\u25FD\\u25FE\\u2614\\u2615\\u2648-\\u2653\\u267F\\u2693\\u26A1\\u26AA\\u26AB\\u26BD\\u26BE\\u26C4\\u26C5\\u26D4\\u26EA\\u26F2\\u26F3\\u26F5\\u26FA\\u26FD\\u2757\\u2B1B\\u2B1C\\u2B50\\u2B55\\u{1F004}\\u{1F21A}\\u{1F22F}]\\uFE0F|\\p{RGI_Emoji}',
+    'gv'
+  );
 } catch {
   EMOJI = /(?:[\u{1F1E6}-\u{1F1FF}]{2}|[#*0-9]️?⃣|\p{Extended_Pictographic}(?:️|[\u{1F3FB}-\u{1F3FF}])?(?:‍\p{Extended_Pictographic}(?:️|[\u{1F3FB}-\u{1F3FF}])?)*)/gu;
 }
@@ -193,7 +198,19 @@ export function countX(text) {
   const nfc = raw.normalize('NFC');
   const t = tally(nfc);
   // Back to the text as typed the way X does it: shift by the length change from normalizing.
-  let fitEnd = Math.max(0, Math.min(raw.length, t.fitEnd + raw.length - nfc.length));
+  // Where that is in the text as typed: the longest start of it that is no longer once normalized (an
+  // accent typed as its own mark stays with its letter).
+  let fitEnd = t.fitEnd;
+  if (raw !== nfc) {
+    let lo = 0;
+    let hi = raw.length;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (raw.slice(0, mid).normalize('NFC').length <= t.fitEnd) lo = mid;
+      else hi = mid - 1;
+    }
+    fitEnd = lo;
+  }
   // (Never between the two halves of one character, an emoji say.)
   if (fitEnd > 0 && fitEnd < raw.length && /[\uD800-\uDBFF]/.test(raw[fitEnd - 1]) && /[\uDC00-\uDFFF]/.test(raw[fitEnd])) fitEnd--;
   return { length: t.weighted, left: X_POST_LIMIT - t.weighted, over: t.weighted > X_POST_LIMIT, fitEnd };

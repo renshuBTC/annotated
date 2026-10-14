@@ -174,6 +174,9 @@ function onPageMessage(m) {
   if (m.type === 'toggle') {
     if (port) port.postMessage({ type: 'ack', ackId: m.ackId });
     onToggle(m.mode);
+  } else if (m.type === 'window') {
+    // The tab moved to another window: the chat you send to is that window's.
+    if (app.session && m.windowId != null) app.session.windowId = m.windowId;
   } else if (m.type === 'focusEditor') {
     if (app.editing) el.editor.focus({ preventScroll: true });
   } else if (m.type === 'key') {
@@ -262,6 +265,7 @@ function keepAlive() {
 function fatal(e) {
   console.error('[Annotated.com]', e);
   if (port) page('hole', { rect: null, only: null }).catch(() => {}); // the whole overlay, so this shows
+  if (port) page('focus').catch(() => {}); // (so Esc reaches it, as the message says)
   document.body.className = '';
   dim(true);
   toast('Annotated.com: ' + ((e && e.message) || e) + ' (Esc to close)', { ms: 8000 });
@@ -282,10 +286,11 @@ async function loadShot(dataUrl) {
   await el.frozen.decode();
   const bitmap = await createImageBitmap(el.frozen);
   const old = app.shot;
-  const shot = { bitmap, scale: bitmap.width / innerWidth };
-  // Your highlights mark words in the picture: if the page looks different there now (it scrolled, say,
-  // while 🎥 showed it live), they'd sit on other words, so they go.
-  if (app.highlights.length && old && old.bitmap && looksDifferent(old, shot, highlightBounds())) {
+  const shot = { bitmap, scale: bitmap.width / innerWidth, vw: innerWidth, vh: innerHeight };
+  // Your highlights mark words in the picture: if the page looks different under them now (it scrolled,
+  // say, while 🎥 showed it live), they'd sit on other words, so they go. (Each line on its own: a video
+  // playing between two highlights doesn't count.)
+  if (app.highlights.length && old && old.bitmap && app.highlights.some((h) => h.rects.some((q) => looksDifferent(old, shot, q)))) {
     app.highlights = [];
     app.edits = app.edits.filter((x) => x !== 'h');
     el.hls.replaceChildren();
@@ -298,23 +303,6 @@ async function loadShot(dataUrl) {
   // it's cropped, not squeezed.
   el.frozen.style.width = innerWidth + 'px';
   el.frozen.style.height = innerHeight + 'px';
-}
-
-// Where all your highlights are (page CSS px).
-function highlightBounds() {
-  let x0 = Infinity;
-  let y0 = Infinity;
-  let x1 = -Infinity;
-  let y1 = -Infinity;
-  for (const h of app.highlights) {
-    for (const r of h.rects) {
-      x0 = Math.min(x0, r.x);
-      y0 = Math.min(y0, r.y);
-      x1 = Math.max(x1, r.x + r.w);
-      y1 = Math.max(y1, r.y + r.h);
-    }
-  }
-  return x1 > x0 && y1 > y0 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
 }
 
 // Whether two pictures of the page differ in an area: both shrunk to a few dozen pixels and compared.
@@ -373,6 +361,7 @@ function refreshShot() {
   return shotJob;
 }
 async function refreshShotNow() {
+  const hadKeys = document.hasFocus(); // (hidden for the picture, the overlay loses the keyboard)
   await page('visible', { visible: false });
   await sleep(120);
   try {
@@ -382,6 +371,7 @@ async function refreshShotNow() {
     app.shotFresh = true;
   } finally {
     await page('visible', { visible: true });
+    if (hadKeys) page('focus').catch(() => {}); // Esc and the arrows keep working
   }
   app.shotWords = takeWords(); // (as pictured; asked once the overlay is back, so it isn't kept hidden)
 }
@@ -1562,17 +1552,21 @@ async function flyText(from, fromFont, to) {
 /* ------------------------------------------------------------------ */
 
 async function enterCompose({ videoHere = false } = {}) {
-  app.gen++;
+  const gen = ++app.gen;
   if (app.pick) app.region = app.pick; // a picture is always of your whole selection
   if (shotJob) await shotJob.catch(() => {}); // (a new picture being taken: that one)
+  if (gen !== app.gen) return; // (something else started meanwhile: that goes on)
   if (!app.shot || app.shotStale) {
     try {
       await refreshShot();
     } catch (e) {
+      if (gen !== app.gen) return;
       toast('Could not capture the page: ' + e.message);
       return enterSelect();
     }
+    if (gen !== app.gen) return;
   }
+  if (!app.region) return enterSelect();
   setState('compose');
   hideAll();
   showFrozen(true);
@@ -1605,6 +1599,7 @@ function refreshSource({ frozen = false } = {}) {
   const region = app.region;
   const opts = { rect: region };
   if (frozen) {
+    opts.frozen = true; // (a picture taken earlier: its video's time then, or none, never the time now)
     const v = videoIn(region);
     if (v && typeof v.t === 'number') opts.time = v.t;
   }
@@ -1740,6 +1735,12 @@ function onHighlightDown(e) {
   if (!pt) return;
   e.preventDefault();
   e.stopPropagation();
+  // The page has moved since its picture (the window or the chat beside it changed its size): its words
+  // aren't where the picture shows them any more.
+  const s = app.shot;
+  if (app.state === 'compose' && s && s.vw && (Math.abs(innerWidth - s.vw) > 2 || Math.abs(innerHeight - s.vh) > 2)) {
+    return toast('The page changed size since its picture. To highlight, choose the area again (▭).', { ms: 4500 });
+  }
   closeBoxMenu();
   try {
     el.hlcatch.setPointerCapture(e.pointerId);
@@ -1802,6 +1803,11 @@ async function onHighlightUp(e) {
     if (d.rects.length) {
       app.highlights.push({ rects: d.rects, dark: hlDark(d.rects), ink: d.ink });
       app.edits.push('h');
+      // (Your typing before it and after it are two undo steps, with the highlight between them.)
+      if (app.editing) {
+        const t = el.editor;
+        t.setSelectionRange(t.selectionStart, t.selectionEnd, t.selectionDirection);
+      }
       app.copied = null;
     }
     drawHighlights();
@@ -2184,9 +2190,10 @@ async function copyVideo() {
   }
   try {
     if (!(await committedForVideo())) throw Object.assign(new Error('Your text is over 280 characters.'), { quiet: true });
-    give((await videoMade()).blob);
+    const made = await videoMade();
+    give(made.blob);
     await wrote;
-    ping('copy', { icon2: 'check' });
+    pingWithNotes('copy', made.notes);
     copiedOk = true;
   } catch (e) {
     fail(e);
@@ -2210,11 +2217,28 @@ async function videoMade() {
   setRing(0);
   setState('review');
   if (v) v.play().catch(() => {});
-  if (out.blob.size > CHAT_MAX_BYTES) {
-    throw new Error(`The video came out at ${Math.round(out.blob.size / 1048576)} MB, over the chat's 50 MB. Save it instead, or record a shorter clip.`);
+  let fit = out;
+  if (fit.blob.size > CHAT_MAX_BYTES) {
+    // A little over the chat's limit: made once more, a little smaller.
+    const again = await makeVideo({ maxBytes: Math.floor((CHAT_MAX_BYTES * 0.9 * CHAT_MAX_BYTES) / fit.blob.size) });
+    if (!again) throw Object.assign(new Error('cancelled'), { quiet: true });
+    el.bar.classList.remove('exporting', 'finished');
+    setRing(0);
+    setState('review');
+    if (again.v) again.v.play().catch(() => {});
+    fit = again.out;
   }
-  app.copied = { key, blob: out.blob, meta: { kind: 'video', name: fileName('Screen Recording', 'mp4'), width: out.width, height: out.height, seconds: out.seconds } };
+  if (fit.blob.size > CHAT_MAX_BYTES) {
+    throw new Error(`The video came out at ${Math.round(fit.blob.size / 1048576)} MB, over the chat's 50 MB. Save it instead, or record a shorter clip.`);
+  }
+  app.copied = { key, blob: fit.blob, notes: fit.notes || [], meta: { kind: 'video', name: fileName('Screen Recording', 'mp4'), width: fit.width, height: fit.height, seconds: fit.seconds } };
   return app.copied;
+}
+
+// "Copied" or "Sent", with anything to know about the video in words next to it (no sound, say).
+function pingWithNotes(icon, notes) {
+  if (notes && notes.length) ping(icon, { icon2: 'check', text: notes.join(' '), ms: 7000 });
+  else ping(icon, { icon2: 'check' });
 }
 
 // Right-click the box (your picture or video): Save, Copy and Send to the chat, like ⤓ ⧉ and the logo
@@ -2559,6 +2583,7 @@ async function enterReview(reason) {
   el.bTime.textContent = fmtTime(app.recResult.durationUs / 1e6);
   el.card.hidden = false;
   updateLayout();
+  page('focus').catch(() => {}); // (you may have clicked into the page while recording)
   if (wasEditing) openEditor();
   layoutCard(true);
   v.play().catch(() => {});
@@ -2665,12 +2690,19 @@ function close({ withChat = false } = {}) {
 // Esc is ✕ (the bar and the chat close), except while a video is being made: then it stops the
 // recording (or calls off the countdown), and while the video is being finished it waits. So one Esc
 // (meant for the page, say, while recording) never throws a recording away: it stops, and the video is
-// there to save.
+// there to save (closing then takes a second press).
 function escapeKey() {
   const st = app.state;
   if (st === 'countdown') return cancelCountdown();
   if (st === 'recording') return stopRecording('esc');
   if (st === 'stopping' || st === 'exporting') return;
+  return closePressed();
+}
+
+// ✕ (or Esc): with a video you haven't saved yet, it asks for a second press first.
+function closePressed() {
+  if (app.state === 'review' && !confirmed(el.bClose)) return armConfirm(el.bClose, 'Press ✕ or Esc again to close without saving this video');
+  disarmConfirm();
   return requestClose();
 }
 
@@ -2687,6 +2719,9 @@ function requestClose({ chatClosed = false } = {}) {
 // video from the bar on the page, and backs out of the dark screen.
 function onToggle(mode) {
   const st = app.state;
+  // The chat closed while your post was on its way to it: the post comes back to you (with why), and the
+  // bar stays so you can send it again.
+  if (mode === 'chat-closed' && chatWait) return chatWait(new Error('The chat closed while it was sending. Open the chat to see if it went in, or send again.'));
   // The chat closed: the bar goes too, but never in the middle of a recording, a video not yet saved,
   // or a picture you've started on in another tab (that would be lost); close it yourself then.
   if (mode === 'chat-closed' && ['countdown', 'recording', 'stopping', 'exporting', 'review'].includes(st)) return;
@@ -2826,7 +2861,7 @@ function endAdjust() {
 /* ------------------------------------------------------------------ */
 
 function inPanel(t) {
-  return t && t.closest && t.closest('.bar, #composer, #card, #liveCap, #toast, #handles');
+  return t && t.closest && t.closest('.bar, #composer, #card, #liveCap, #toast, #handles, #inks, #boxMenu');
 }
 
 /* ------------------------------------------------------------------ */
@@ -2875,7 +2910,7 @@ async function sendToChat() {
   }
   if (!sent || closing) return;
   flight.end();
-  ping('logo', { icon2: 'check' });
+  pingWithNotes('logo', video && app.copied ? app.copied.notes : null);
   done(gen);
 }
 
@@ -2963,6 +2998,7 @@ async function videoForChat() {
 
 // Gives the chat in this window what you made and waits until it's posted. The chat may still be
 // opening: it's asked again until it answers, and it says how the upload is going meanwhile.
+let chatWait = null; // (the post on its way to the chat: called if the chat closes meanwhile)
 function handToChat(post) {
   return new Promise((resolve, reject) => {
     const bc = new BroadcastChannel(CHAT_CHANNEL);
@@ -2973,12 +3009,14 @@ function handToChat(post) {
     let again = 0;
     let watch = 0;
     const done = (err) => {
+      if (chatWait === done) chatWait = null;
       clearInterval(again);
       clearInterval(watch);
       bc.close();
       if (err) reject(err);
       else resolve();
     };
+    chatWait = done;
     bc.onmessage = (e) => {
       const m = e.data;
       if (!m || m.id !== id) return;
@@ -3066,7 +3104,7 @@ function wireUi() {
     flashPress(b);
     if (b.dataset.kind) return onKind(b.dataset.kind);
     if (b.dataset.shape) return onShape(b.dataset.shape);
-    if (b === el.bClose) return requestClose();
+    if (b === el.bClose) return closePressed();
     if (b === el.bRec) return onRec();
     if (b === el.bStop) return onStop();
     if (b === el.bPause) return togglePause();
@@ -3099,7 +3137,8 @@ function wireUi() {
   el.editor.addEventListener('input', (e) => {
     if (e.inputType === 'historyUndo') {
       const last = app.edits[app.edits.length - 1];
-      if (last && last !== 'h' && el.editor.value === last.from) app.edits.pop(); // that typing is all undone
+      const v = el.editor.value;
+      if (last && last !== 'h' && (v === last.from || v.length < last.from.length)) app.edits.pop(); // that typing is all undone
     }
     autosize();
     updateCounter();
@@ -3126,10 +3165,14 @@ function wireUi() {
       return;
     }
     // Undo: a highlight you've made since you last typed goes first (then your typing, the line's own).
-    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'z' && ['compose', 'review'].includes(app.state) && app.edits[app.edits.length - 1] === 'h' && app.highlights.length) {
-      e.preventDefault();
-      undoHighlight();
-      return;
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'z' && ['compose', 'review'].includes(app.state)) {
+      // (Typing that's all undone already, or that changed nothing, has nothing left to undo.)
+      for (let top = app.edits[app.edits.length - 1]; top && top !== 'h' && top.from === el.editor.value; top = app.edits[app.edits.length - 1]) app.edits.pop();
+      if (app.edits[app.edits.length - 1] === 'h' && app.highlights.length) {
+        e.preventDefault();
+        undoHighlight();
+        return;
+      }
     }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -3242,6 +3285,8 @@ function onPointerMove(e) {
     app.repick = null;
     keepTextForRepick();
     if (app.shape !== 'rect') app.shape = 'rect';
+    // (After 🎥 showed the page live, it may have moved: you choose again on a new picture of it.)
+    if (app.shotStale) return enterSelect({ fresh: true });
     enterSelect();
     try {
       document.body.setPointerCapture(e.pointerId);

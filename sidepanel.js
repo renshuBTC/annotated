@@ -210,6 +210,8 @@ function isWebLink(s) {
 
 // Text with its web links clickable (only http and https).
 function linkify(text) {
+  // (No direction overrides: with them, a link could show one address and open another.)
+  text = String(text).replace(/[\u202A-\u202E\u2066-\u2069]/g, '');
   const frag = document.createDocumentFragment();
   const re = /\bhttps?:\/\/[^\s<>"']+/gi;
   let last = 0;
@@ -324,7 +326,7 @@ function randomName() {
 // server does the same).
 function cleanName(s) {
   return String(s || '')
-    .replace(/[\u00AD\u034F\u115F\u1160\u17B4\u17B5\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u206A-\u206F\u2800\u3164\uFEFF\uFFA0]/g, '')
+    .replace(/[\u00AD\u034F\u115F\u1160\u17B4\u17B5\u180E\u200B-\u200F\u202A-\u202E\u2060-\u206F\u2800\u3164\uFEFF\uFFA0]/g, '')
     .replace(/[@＠﹫]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
@@ -985,7 +987,15 @@ function dropPost(id) {
   }
   const gone = state.posts.get(id);
   if (gone && gone.media_path) forgetLocal(gone.media_path);
-  if (!state.posts.delete(id)) return;
+  // Replies to it say it was deleted (as the server marks them; here even if that word was missed).
+  let replies = false;
+  for (const [rid, r] of state.posts) {
+    if (r.reply_to !== id) continue;
+    state.posts.set(rid, { ...r, reply_to: null, reply_gone: true, reply_name: null, reply_text: null, reply_media: null, reply_path: null });
+    redraw(rid);
+    replies = true;
+  }
+  if (!state.posts.delete(id) && !replies) return;
   render();
 }
 
@@ -994,6 +1004,7 @@ function dropPost(id) {
 async function loadLikes(ids) {
   for (let i = 0; i < ids.length; i += 100) {
     const chunk = ids.slice(i, i + 100);
+    const ticks = new Map(chunk.map((id) => [id, likeTicks.get(id) || 0]));
     const data = [];
     for (let from = 0; ; from += 1000) {
       const { data: rows, error } = await sb.from('likes').select('*').in('message_id', chunk).order('message_id').order('user_id').range(from, from + 999);
@@ -1004,6 +1015,7 @@ async function loadLikes(ids) {
     const fresh = new Map(chunk.map((id) => [id, new Map()]));
     for (const l of data) if (fresh.has(l.message_id)) fresh.get(l.message_id).set(l.user_id, likeFrom(l));
     for (const [id, m] of fresh) {
+      if ((likeTicks.get(id) || 0) !== ticks.get(id)) continue; // (changed meanwhile: what's here is newer)
       const old = state.likes.get(id);
       if (old ? old.size === m.size && [...m.keys()].every((u) => old.has(u)) : !m.size) continue;
       if (m.size) state.likes.set(id, m);
@@ -1030,11 +1042,12 @@ function loadOlder() {
 
 async function loadOlderNow() {
   el.older.hidden = false;
-  const fromBottom = el.feed.scrollHeight - el.feed.scrollTop;
   try {
     const { data, error } = await sb.from('messages').select('*').lt('created_at', state.oldest).order('created_at', { ascending: false }).limit(PAGE);
     if (error) throw error;
     if (data.length < PAGE) state.atStart = true;
+    el.older.hidden = true;
+    const fromBottom = el.feed.scrollHeight - el.feed.scrollTop; // (where you are now, after scrolling meanwhile)
     const keep = nearBottom();
     const fresh = [];
     for (const p of data) {
@@ -1091,6 +1104,7 @@ async function dropGone() {
 // Go to a post (the one a reply quotes, a search result), loading earlier posts until it's there.
 async function jumpTo(id) {
   if (!id) return;
+  if (state.deleted.has(id)) return setBanner('That post was deleted.', { ms: 3000 });
   if (state.search) closeSearch({ keepScroll: true });
   for (let i = 0; i < 40 && !nodes.get(id) && !state.atStart; i++) await loadOlder();
   const li = nodes.get(id);
@@ -1125,6 +1139,7 @@ function goLive() {
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'likes' }, ({ new: l }) => onLike(l))
     .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'likes' }, ({ old: l }) => {
       if (!l || !state.likes.has(l.message_id)) return;
+      likeTick(l.message_id);
       state.likes.get(l.message_id).delete(l.user_id);
       renderLikes(l.message_id);
     })
@@ -1150,8 +1165,13 @@ function goLive() {
     });
 }
 
+// Likes that changed on a post (live, or yours): a load of likes asked for before doesn't undo them.
+const likeTicks = new Map();
+const likeTick = (id) => likeTicks.set(id, (likeTicks.get(id) || 0) + 1);
+
 function onLike(l) {
   if (!l || !(state.posts.has(l.message_id) || (state.search && state.search.rows.has(l.message_id)))) return;
+  likeTick(l.message_id);
   likesOf(l.message_id).set(l.user_id, likeFrom(l));
   renderLikes(l.message_id);
 }
@@ -1356,6 +1376,7 @@ async function toggleLike(p) {
   }
   const m = likesOf(p.id);
   const had = m.has(uid);
+  likeTick(p.id);
   // Show it at once; put it back if the server says no.
   const mineNow = { name: state.name, handle: state.me ? state.me.handle : null, photo: state.me ? state.me.photo : null };
   if (had) m.delete(uid);
@@ -1523,7 +1544,7 @@ async function sendClaim() {
         : code === '42P01' || code === 'PGRST205'
           ? 'Claims can’t be sent yet: this chat’s database needs updating.'
           : 'Couldn’t send the claim: ' + friendly(e);
-    if (run !== claimRun) return setBanner(why, { ms: 6000 }); // (its window was closed meanwhile)
+    if (run !== claimRun || !el.claim.open) return setBanner(why, { ms: 6000 }); // (its window was closed meanwhile)
     claimError(why);
     el.claimSend.disabled = false;
     el.claimSend.textContent = 'Send claim';
@@ -2238,6 +2259,17 @@ function setProgress(p) {
   bar.style.setProperty('--p', String(Math.max(0, Math.min(1, p))));
 }
 
+// The post's answer didn't come (the connection dropped): whether it went in anyway. The post, null when it
+// didn't, or undefined when that can't be told yet.
+async function postInserted(path) {
+  try {
+    const { data, error } = await sb.from('messages').select('*').eq('media_path', path).maybeSingle();
+    return error ? undefined : data || null;
+  } catch {
+    return undefined;
+  }
+}
+
 // Upload straight to storage (so we can show progress), into your own folder.
 async function upload(path, file, onProgress) {
   const {
@@ -2256,8 +2288,8 @@ async function upload(path, file, onProgress) {
     const kick = () => {
       clearTimeout(stall);
       stall = setTimeout(() => {
-        xhr.abort();
         reject(new Error('The upload stopped getting anywhere. Check your connection and try again.'));
+        xhr.abort(); // (after: stopping it says something else)
       }, 45000);
     };
     xhr.upload.onprogress = (e) => {
@@ -2273,6 +2305,7 @@ async function upload(path, file, onProgress) {
         const j = JSON.parse(xhr.responseText);
         msg = j.message || j.error || msg;
       } catch {}
+      if (/row-level security/i.test(msg)) msg = 'You can post at most 40 pictures and videos an hour. Try again a little later.';
       reject(new Error(msg));
     };
     xhr.onerror = () => reject(new Error('The upload failed. Check your connection and try again.'));
@@ -2305,7 +2338,14 @@ async function send() {
       Object.assign(row, mediaRow(path, att.file, att.kind, att));
       keepLocal(path, att.file); // (before the post goes in: the chat may hear of it first)
     }
-    const { data, error } = await sb.from('messages').insert(row).select().single();
+    let { data, error } = await sb.from('messages').insert(row).select().single();
+    if (error && path && !error.code) {
+      // (No answer from the server: it may have gone in. If it did, that's the post; if that can't be told,
+      // its picture stays.)
+      const there = await postInserted(path);
+      if (there) [data, error] = [there, null];
+      else if (there === undefined) path = null;
+    }
     if (error) throw error;
     path = null;
     // (Anything typed, or another post picked to answer, while it uploaded stays.)
@@ -2390,11 +2430,16 @@ async function postNow({ file, kind, source, width, height, seconds }, onProgres
   await upload(path, file, onProgress);
   Object.assign(row, mediaRow(path, file, kind === 'video' ? 'video' : 'image', { width, height, seconds }));
   keepLocal(path, file); // (before the post goes in: the chat may hear of it first)
-  const { data, error } = await sb.from('messages').insert(row).select().single();
+  let { data, error } = await sb.from('messages').insert(row).select().single();
   if (error) {
-    forgetLocal(path);
-    sb.storage.from(BUCKET).remove([path]).catch(() => {});
-    throw error;
+    // (No answer from the server: it may have gone in anyway, and then that's the post.)
+    const there = error.code ? null : await postInserted(path);
+    if (there) data = there;
+    else {
+      forgetLocal(path);
+      if (there === null) sb.storage.from(BUCKET).remove([path]).catch(() => {}); // (it didn't go in: its file goes)
+      throw error;
+    }
   }
   if (state.search) closeSearch();
   refreshMine();
@@ -2406,6 +2451,7 @@ async function postNow({ file, kind, source, width, height, seconds }, onProgres
 // Esc here (when it isn't closing something in the chat) is the bar's ✕: the chat closes, and the bar
 // goes with it.
 function closeAnnotated() {
+  if (state.windowId != null) chrome.runtime.sendMessage({ type: 'snip:chatClosing', windowId: state.windowId }).catch(() => {});
   try {
     if (chrome.sidePanel && chrome.sidePanel.close && state.windowId != null) {
       chrome.sidePanel.close({ windowId: state.windowId }).catch(() => window.close());
