@@ -335,6 +335,8 @@
     const { host, port, watchdog, guard, dialogs, dialog } = ui;
     ui = null;
     followed = null;
+    unhold(false);
+    unwatch();
     if (dialogs) dialogs.disconnect();
     if (dialog) dialog.removeEventListener('beforetoggle', onDialogToggle);
     window.removeEventListener('focusin', onFocusIn, true);
@@ -736,7 +738,96 @@
   // Recording starts (after the countdown) or goes on: the page's video in your area plays. Paused or
   // stopped: it pauses. So you never press both, and the clip starts where the video does. (A player in
   // another site's frame, like a YouTube video embedded in an article, can't be reached from here.)
+  // One that's already playing (X and TikTok play them by themselves) waits during the countdown; a
+  // clip short enough to fit starts over from the beginning, and the recording stops where it ends.
   let followed = null; // the video playing along with this recording
+  let held = null; // { v, playing, onPlay } while the countdown runs
+  let watched = null; // { v, onEnded, loop } the video whose end ends the recording
+  const SUBJECT = 0.4; // covering this much of your area, the video is what you're recording
+
+  function shareOf(v, rect) {
+    return overlap(rectOf(v), rect) / Math.max(1, rect.w * rect.h);
+  }
+
+  // The countdown starts: the video waits for the recording (it doesn't run on, unrecorded). An
+  // already playing clip that fits in one recording goes back to its start, so all of it is in the clip.
+  function holdVideo(rect, limit) {
+    unhold(false);
+    const v = videoToFollow(rect);
+    if (!v) return { video: false };
+    const playing = !v.paused && !v.ended;
+    const subject = shareOf(v, rect) >= SUBJECT;
+    const restart = playing && subject && Number.isFinite(v.duration) && v.duration > 0 && v.duration <= limit;
+    // Muted (as autoplaying feeds start them): its sound won't be in the clip. Said only for the video
+    // you're recording, and not for one with no sound to lose (one that played and decoded no sound).
+    const sound = !('webkitAudioDecodedByteCount' in v) || v.webkitAudioDecodedByteCount > 0 || v.currentTime < 0.5;
+    const muted = subject && (v.muted || v.volume === 0) && sound;
+    // (A page that starts it again by itself meanwhile, as autoplaying feeds do: it waits again, back where
+    // it was waiting, so nothing of it plays before the recording.)
+    const onPlay = () => {
+      if (!held || held.v !== v) return;
+      v.pause();
+      if (Math.abs(v.currentTime - held.at) > 0.01) {
+        try {
+          v.currentTime = held.at;
+        } catch {}
+      }
+    };
+    if (playing) v.pause();
+    if (restart) {
+      try {
+        v.currentTime = 0;
+      } catch {}
+    }
+    held = { v, playing, onPlay, at: restart ? 0 : v.currentTime };
+    v.addEventListener('play', onPlay);
+    return { video: true, playing, restart, muted };
+  }
+
+  // The countdown is over. Called off: a video that was playing plays on (resume).
+  function unhold(resume) {
+    if (!held) return;
+    const { v, playing, onPlay } = held;
+    held = null;
+    v.removeEventListener('play', onPlay);
+    if (resume && playing && v.paused) v.play().catch(() => {});
+  }
+
+  // The video's end ends the recording (it's the end of what you're recording). One that would start
+  // over by itself (looping) ends instead, while it's recorded.
+  function watchEnd(v) {
+    unwatch();
+    let said = false;
+    const onEnded = () => {
+      if (said || !ui || !watched || watched.v !== v) return;
+      said = true;
+      ui.port.postMessage({ type: 'videoEnded' });
+    };
+    // (A player that starts it over itself, going back to the start from its last second: its end too.)
+    let last = v.currentTime;
+    const onTime = () => {
+      if (!v.seeking) last = v.currentTime;
+    };
+    const onSeeking = () => {
+      const d = v.duration;
+      if (Number.isFinite(d) && v.currentTime < 0.5 && last > d - 1.5 && !v.paused) onEnded();
+    };
+    watched = { v, onEnded, onTime, onSeeking, loop: v.loop };
+    v.loop = false;
+    v.addEventListener('ended', onEnded);
+    v.addEventListener('timeupdate', onTime);
+    v.addEventListener('seeking', onSeeking);
+  }
+
+  function unwatch() {
+    if (!watched) return;
+    const { v, onEnded, onTime, onSeeking, loop } = watched;
+    watched = null;
+    v.removeEventListener('ended', onEnded);
+    v.removeEventListener('timeupdate', onTime);
+    v.removeEventListener('seeking', onSeeking);
+    if (loop) v.loop = true;
+  }
 
   // Every <video> on the page, in shadow roots too (a custom element's closed one included).
   function allVideos() {
@@ -776,11 +867,19 @@
     return best;
   }
 
-  // action: 'play' (the recording starts, or goes on: m.from 'start' | 'resume'), 'pause' or 'stop'.
+  // action: 'hold' (the countdown starts), 'release' (it's called off), 'play' (the recording starts, or
+  // goes on: m.from 'start' | 'resume'), 'pause' or 'stop'.
   async function followRecording(action, rect, m = {}) {
+    if (action === 'hold') return rect ? holdVideo(rect, Math.max(1, (m.limit || 90) - 0.5)) : { video: false };
+    if (action === 'release') {
+      unhold(true);
+      return { video: false };
+    }
+    unhold(false);
     const now = rect ? videoToFollow(rect) : null;
     if (action === 'play') {
       followed = now;
+      if (now && m.from === 'start' && shareOf(now, rect) >= SUBJECT) watchEnd(now);
       if (!now) {
         // Only another site's player there (no video of the page's own): it can't be started from here.
         const embed = rect && !!document.querySelector('iframe') && listVideos().some((x) => x.kind === 'embed' && overlap(x, rect) > 0.3 * Math.min(x.w * x.h, rect.w * rect.h));
@@ -809,7 +908,10 @@
         paused++;
       }
     }
-    if (action === 'stop') followed = null;
+    if (action === 'stop') {
+      followed = null;
+      unwatch();
+    }
     return { video: !!(followed || now), paused };
   }
 

@@ -182,6 +182,9 @@ function onPageMessage(m) {
     if (app.editing) el.editor.focus({ preventScroll: true });
   } else if (m.type === 'key') {
     onForwardedKey(m);
+  } else if (m.type === 'videoEnded') {
+    // The video you're recording came to its end: so does the recording.
+    if (app.state === 'recording') stopRecording('videoend');
   }
 }
 
@@ -384,6 +387,8 @@ async function refreshShotNow() {
 function setState(s) {
   closeBoxMenu();
   closeInks();
+  // The countdown called off (or it couldn't start): a video it held plays on as it was.
+  if (app.state === 'countdown' && s !== 'countdown' && s !== 'recording') videoFollows('release');
   app.state = s;
   bodyState();
   syncBar();
@@ -1233,7 +1238,7 @@ function togglePause() {
 // Never waits long: a page that doesn't answer doesn't hold the recording up.
 function videoFollows(action, from = '') {
   if (!app.region) return Promise.resolve(null);
-  return Promise.race([page('media', { action, from, rect: app.region }), sleep(1000).then(() => null)]).catch(() => null);
+  return Promise.race([page('media', { action, from, rect: app.region, limit: X.videoMaxSeconds }), sleep(1000).then(() => null)]).catch(() => null);
 }
 
 // Space pauses or goes on while recording, except while you're writing your text (then it's a space).
@@ -2415,6 +2420,11 @@ async function startRecording() {
   app.startedAt = performance.now();
   setState('countdown');
   el.bRecCount.textContent = '';
+  // A video already playing in your area (X and TikTok play them by themselves) waits for the
+  // recording; a short clip goes back to its start. Muted, its sound won't be in the clip: it says so.
+  videoFollows('hold').then((r) => {
+    if (r && r.muted && current()) toast('The video is muted, so the recording won’t have its sound.', { icon: 'muted', ms: 4500 });
+  });
   const backToArmed = (msg) => {
     if (attempt !== app.attempt) return;
     setState('armed');
@@ -2649,6 +2659,7 @@ async function enterReview(reason) {
   v.play().catch(() => {});
   if (reason === 'limit') ping('timer', { text: fmtTime(Math.round(app.recResult.durationUs / 1e6)), ms: 2600 });
   else if (reason === 'resize') ping('resize', { ms: 2600 });
+  else if (reason === 'videoend') toast('Stopped at the end of the video.', { icon: 'stop', ms: 3000 });
   else if (reason === 'error') toast('Recording stopped because of an error. What was recorded before it is kept.');
 }
 
