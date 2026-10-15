@@ -179,14 +179,22 @@ async function openBar(tab, mode, { ensure, quiet }) {
   setTimeout(() => sessions.delete(token), 5 * 60 * 1000);
 
   try {
-    await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds: [0] }, files: ['content.js'], injectImmediately: true });
-    await chrome.tabs.sendMessage(tab.id, { type: 'snip:open', token, mode }, { frameId: 0 });
+    await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds: [0] }, files: ['cleanurl.js', 'content.js'], injectImmediately: true });
+    const r = await chrome.tabs.sendMessage(tab.id, { type: 'snip:open', token, mode }, { frameId: 0 });
+    if (r && r.error === 'notHtml') {
+      sessions.delete(token);
+      if (!quiet) showBlocked(tab, 'nothtml', '');
+      return;
+    }
+    if (r && r.error) throw new Error(r.error);
     barTabs.add(tab.id);
   } catch (e) {
     sessions.delete(token);
     const msg = errText(e);
     // (The tab closed, or went to another page, meanwhile: there's nothing to explain.)
-    if (/no tab with id|was removed|tab was closed/i.test(msg) || !(await chrome.tabs.get(tab.id).catch(() => null))) return;
+    const now = await chrome.tabs.get(tab.id).catch(() => null);
+    if (/no tab with id|was removed|tab was closed/i.test(msg) || !now) return;
+    if (now.status === 'loading' || (tab.url && now.url && now.url !== tab.url)) return;
     if (quiet) {
       // Chrome hasn't let Annotated.com onto this page yet (that takes a press of the icon here): the
       // chat says so.

@@ -42,7 +42,8 @@ function mctx() {
 // Sizes (in CSS px of the box) for a caption that is `width` wide.
 export function captionMetrics(width) {
   const size = clamp(Math.round(width * 0.046), 15, 44);
-  const pad = clamp(Math.round(size * 0.72), 10, 30);
+  // (A very thin snip: less room at the sides, so the words stay inside it.)
+  const pad = Math.min(clamp(Math.round(size * 0.72), 10, 30), Math.max(2, Math.floor(width * 0.15)));
   const srcSize = clamp(Math.round(size * 0.5), 11, 20);
   return {
     size,
@@ -80,43 +81,51 @@ function wrap(ctx, text, maxW, isUrl) {
       continue;
     }
     const tokens = isUrl ? para.match(/[^/?&=.\-_#]*[/?&=.\-_#]?/g).filter(Boolean) : para.match(WORDS) || [para];
-    let line = '';
+    let toks = []; // (the line so far, word by word: a Chinese or Japanese character, or a whole word or number)
+    const line = () => toks.join('');
     const pushLong = (tok) => {
       // Split a token that doesn't fit on a line of its own.
+      let cur = line();
       for (const g of graphemes(tok)) {
-        if (line && !fits(line + g)) {
-          out.push(line);
-          line = g.trimStart();
+        if (cur && !fits(cur + g)) {
+          out.push(cur);
+          cur = g.trimStart();
         } else {
-          line += g;
+          cur += g;
         }
       }
+      toks = cur ? [cur] : [];
     };
     for (const tok of tokens) {
-      if (!line) {
+      if (!toks.length) {
         const t = tok.trimStart();
-        if (fits(t)) line = t;
+        if (fits(t)) toks = [t];
         else pushLong(t);
         continue;
       }
-      if (fits(line + tok)) {
-        line += tok;
+      if (fits(line() + tok)) {
+        toks.push(tok);
       } else {
-        let carry = '';
+        let carry = [];
         if (!isUrl && CLOSING.test(tok)) {
-          // (The character before a closing mark goes to the next line with it.)
-          const gs = graphemes(line);
-          if (gs.length > 1) carry = gs.pop();
-          line = gs.join('');
+          // A closing mark never starts a line: the marks already at the end of this line and the
+          // character or whole word before them go down with it (a number or a word is never split; a
+          // line is never emptied for it).
+          let k = toks.length;
+          while (k > 0 && CLOSING.test(toks[k - 1].trimStart())) k--;
+          if (k > 1) {
+            carry = toks.slice(k - 1);
+            toks = toks.slice(0, k - 1);
+          }
         }
-        out.push(line);
-        line = '';
-        const t = (carry + tok).trimStart();
-        if (fits(t)) line = t;
+        out.push(line());
+        toks = [];
+        const t = (carry.join('') + tok).trimStart();
+        if (fits(t)) toks = [t];
         else pushLong(t);
       }
     }
-    out.push(line);
+    out.push(line());
   }
   // Drop trailing empty lines.
   while (out.length && !out[out.length - 1]) out.pop();
@@ -141,7 +150,7 @@ export function layoutCaption({ text, source, width }) {
   const ctx = mctx();
   const m = captionMetrics(width);
   const colors = COLORS;
-  const inner = Math.max(20, width - m.pad * 2);
+  const inner = Math.max(1, width - m.pad * 2);
   const capFont = captionFont(m.size, 600);
   const srcFont = captionFont(m.srcSize, 500);
   const clean = (text || '').replace(/\r/g, '').replace(/[ \t]+$/gm, '').replace(/\n{3,}/g, '\n\n').trim();

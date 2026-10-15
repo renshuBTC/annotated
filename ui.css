@@ -131,6 +131,9 @@ body.shape-window.st-select { cursor: default; }
 #card .hls .ink { mix-blend-mode: multiply; }
 #card .hls i { position: absolute; border-radius: 2px; }
 #card .hlcatch { position: absolute; left: 0; top: 0; cursor: text; touch-action: none; }
+/* A finger's drag on the dark screen chooses an area (or pulls a handle, or moves the bar), rather than
+   scrolling the page under it. */
+body.st-select, body.st-compose, body.st-armed, #handles i, .bar { touch-action: none; }
 #card .media > canvas, #card .media > video { display: block; width: 100%; height: 100%; }
 #card .media > video { object-fit: fill; }
 #card .cap { display: block; cursor: text; transition: opacity 0.2s; }

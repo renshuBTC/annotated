@@ -3,15 +3,16 @@
 --
 -- Who can do what:
 --   * Anyone with the extension can read every post.
---   * Each install signs in anonymously and posts as itself (at most 10 posts a minute, counted even
---     if they're deleted again).
+--   * Each install signs in anonymously and posts as itself (at most 10 posts a minute and 300 a day,
+--     counted even if they're deleted again).
 --   * You can delete only your own posts and files. Nobody can edit a post.
 --   * Only annotations (a picture or video with its source link) go to everyone. Everything else is a
 --     reply to an annotation, and a reply can't be replied to. The reply keeps a short quote of what it
 --     answers (filled in here, not by the app).
 --   * Anyone signed in can like a post (once each) and take the like back.
 --   * Each post counts how many people have seen it (its "Views", like X): everyone who has had it on
---     screen in the chat, each once. Only the count is public, not who saw what.
+--     screen in the chat, each once (sent at most 60 times a minute, 100 posts at a time). Only the count
+--     is public, not who saw what.
 --   * Signing in with X shows your @handle and X photo on your posts and likes. The server fills
 --     them in from the X account you signed in with, so nobody can post under someone else's handle.
 --   * Pictures and videos go in a public "posts" bucket, 50 MB per file at most (the Free plan's limit),
@@ -96,7 +97,8 @@ $$;
 revoke all on function public.chat_limit(uuid, text, integer, interval, text) from public, anon, authenticated;
 
 -- A plain name can't pass for an @handle: no @ in it anywhere, and no invisible or blank-looking
--- characters (which could hide where a name starts).
+-- characters (which could hide where a name starts); every kind of space is a plain space (the same as
+-- the app does before it sends your name).
 create or replace function public.chat_clean_name(name text)
 returns text
 language sql
@@ -104,9 +106,9 @@ immutable
 set search_path = ''
 as $$
   select coalesce(nullif(btrim(regexp_replace(regexp_replace(
-    regexp_replace(name, '[\u00AD\u034F\u115F\u1160\u17B4\u17B5\u180E\u200B-\u200F\u202A-\u202E\u2060-\u206F\u2800\u3164\uFEFF\uFFA0]', '', 'g'),
+    regexp_replace(name, '[\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B-\u200F\u202A-\u202E\u2060-\u206F\u2800\u3164\uFEFF\uFFA0\uFFF9-\uFFFB\U0001D173-\U0001D17A\U000E0000-\U000E007F]', '', 'g'),
     '[@＠﹫]', '', 'g'),
-    '[[:space:]]+', ' ', 'g')), ''), 'Someone')
+    '[[:space:]\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+', ' ', 'g')), ''), 'Someone')
 $$;
 
 -- A file's path is <your id>/<random id>.<type>, and the type matches what the post says it is.
@@ -117,7 +119,7 @@ begin
       media_path ~ '^[0-9a-f-]{36}/[0-9a-f-]{36}\.(png|jpg|webp|gif|mp4|webm)$'
       and (media_type = 'video') = (media_path ~ '\.(mp4|webm)$')
     )
-  );
+  ) not valid; -- (posts from before this rule stay; every new one is checked)
 exception
   when duplicate_object then null; -- already there
 end;
@@ -249,6 +251,7 @@ begin
     new.reply_path := parent.media_path;
   end if;
   perform public.chat_limit(new.user_id, 'post', 10, interval '1 minute', 'posts a minute');
+  perform public.chat_limit(new.user_id, 'post-day', 300, interval '1 day', 'posts a day');
   return new;
 end;
 $$;
@@ -419,13 +422,17 @@ as $$
 declare
   me uuid := auth.uid();
   fresh uuid[];
+  first uuid[];
 begin
   if me is null or ids is null or cardinality(ids) = 0 then
     return;
   end if;
+  perform public.chat_limit(me, 'seen', 60, interval '1 minute', 'view updates a minute');
+  -- (The first 100, however the list is shaped: a list of lists is one long list here.)
+  select array_agg(x) into first from (select unnest(ids) as x limit 100) s;
   with added as (
     insert into public.views (message_id, user_id)
-    select m.id, me from public.messages m where m.id = any (ids[1:100])
+    select m.id, me from public.messages m where m.id = any (first)
     on conflict do nothing
     returning message_id
   )
@@ -450,8 +457,14 @@ on conflict (id) do update
       file_size_limit = excluded.file_size_limit,
       allowed_mime_types = excluded.allowed_mime_types;
 
+-- The helpers the file rules below use live in their own schema, which the API doesn't offer, so nobody
+-- can call them (one says whether a post has a claim on it, and claims are private).
+create schema if not exists private;
+revoke all on schema private from public, anon;
+grant usage on schema private to authenticated;
+
 -- How many files you've uploaded in the last hour (a policy can't look at its own table, so this does).
-create or replace function public.chat_recent_uploads()
+create or replace function private.chat_recent_uploads()
 returns integer
 language sql
 stable
@@ -461,11 +474,11 @@ as $$
   select count(*)::integer from storage.objects o
   where o.bucket_id = 'posts' and o.owner_id = (select auth.jwt() ->> 'sub') and o.created_at > now() - interval '1 hour'
 $$;
-revoke all on function public.chat_recent_uploads() from public, anon;
-grant execute on function public.chat_recent_uploads() to authenticated;
+revoke all on function private.chat_recent_uploads() from public, anon;
+grant execute on function private.chat_recent_uploads() to authenticated;
 
 -- Whether a claim keeps a file (a copy of the post it's about): it isn't deleted or replaced then.
-create or replace function public.chat_file_kept(path text)
+create or replace function private.chat_file_kept(path text)
 returns boolean
 language plpgsql
 stable
@@ -479,12 +492,12 @@ exception
     return false; -- (no claims yet: set up below)
 end;
 $$;
-revoke all on function public.chat_file_kept(text) from public, anon;
-grant execute on function public.chat_file_kept(text) to authenticated;
+revoke all on function private.chat_file_kept(text) from public, anon;
+grant execute on function private.chat_file_kept(text) to authenticated;
 
 -- Whether no post uses a file at this place (one that does can't be deleted and uploaded again as
 -- something else: nobody can change a post).
-create or replace function public.chat_path_unused(path text)
+create or replace function private.chat_path_unused(path text)
 returns boolean
 language plpgsql
 stable
@@ -493,11 +506,11 @@ set search_path = ''
 as $$
 begin
   return not exists (select 1 from public.messages m where m.media_path = path)
-    and not public.chat_file_kept(path);
+    and not private.chat_file_kept(path);
 end;
 $$;
-revoke all on function public.chat_path_unused(text) from public, anon;
-grant execute on function public.chat_path_unused(text) to authenticated;
+revoke all on function private.chat_path_unused(text) from public, anon;
+grant execute on function private.chat_path_unused(text) to authenticated;
 
 -- Upload only into a folder named after yourself, named the way the chat names files
 -- (posts/<your id>/<random id>.<type>), at most 40 files an hour, and never in place of a post's file.
@@ -508,8 +521,8 @@ create policy "Upload into your own folder" on storage.objects
     bucket_id = 'posts'
     and (storage.foldername(name))[1] = (select auth.jwt() ->> 'sub')
     and name ~ '^[0-9a-f-]{36}/[0-9a-f-]{36}\.(png|jpg|webp|gif|mp4|webm)$'
-    and public.chat_recent_uploads() < 40
-    and public.chat_path_unused(name)
+    and private.chat_recent_uploads() < 40
+    and private.chat_path_unused(name)
   );
 
 -- Removing a file needs to see it and delete it; only your own.
@@ -521,7 +534,12 @@ create policy "See your own files" on storage.objects
 drop policy if exists "Delete your own files" on storage.objects;
 create policy "Delete your own files" on storage.objects
   for delete to authenticated
-  using (bucket_id = 'posts' and owner_id = (select auth.jwt() ->> 'sub') and not public.chat_file_kept(name));
+  using (bucket_id = 'posts' and owner_id = (select auth.jwt() ->> 'sub') and not private.chat_file_kept(name));
+
+-- (The same helpers as earlier versions had them, callable by anyone: gone.)
+drop function if exists public.chat_path_unused(text);
+drop function if exists public.chat_file_kept(text);
+drop function if exists public.chat_recent_uploads();
 
 -- 5) Claims ------------------------------------------------------------------------------------------
 

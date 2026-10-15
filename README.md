@@ -59,7 +59,7 @@ One chat for everyone with Annotated.com, in Chrome's side panel. Annotations (p
 
 ## Privacy
 
-Snipping and saving happen on your computer. Only what you post in the chat is uploaded, and posts in the chat are public. The extension only works on a tab after you click its icon there, and asks for no access to your browsing history.
+Snipping and saving happen on your computer. Only what you post in the chat is uploaded, and posts in the chat are public. The extension only works on a tab after you click its icon there, and asks for no access to your browsing history. The source link under a snip leaves out logins, keys, one-time codes, email addresses and tracking tags.
 
 The chat runs on [Supabase](https://supabase.com). To run it on your own project, run `supabase/setup.sql` in its SQL Editor, turn on anonymous sign-ins, and put the project's URL and publishable key in `chat-config.js`.
 

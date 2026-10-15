@@ -12,6 +12,7 @@ const text = {
     "Chrome doesn't let extensions work on its own pages (like the New Tab page, Settings or chrome://extensions). Open any website, such as youtube.com or x.com, and click the icon again.",
   store: "The Chrome Web Store doesn't allow any extension to run on its pages. Open another website and click the icon again.",
   file: "To snip files opened from your computer, allow it first: open this extension's settings and turn on \"Allow access to file URLs\".",
+  nothtml: "Annotated.com works on web pages, and this is an SVG or XML file opened on its own. Open a web page and click the icon again.",
   script: "Chrome didn't let Annotated.com run on this page. Try reloading the page, or open another website.",
 };
 msg.textContent = text[why] || text.script;

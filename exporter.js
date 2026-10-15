@@ -411,6 +411,7 @@ export async function exportVideo({ rec, region, layout, highlights = [], onProg
   const useAudio = rec.audio && rec.audio.codec === 'aac' && rec.audio.chunks.length;
   // Whole audio frames only, all ending before the video does (so the file never runs past its 90 seconds).
   const audioChunks = useAudio ? rec.audio.chunks.filter((c) => c.timestamp >= 0 && c.timestamp + (c.duration || 0) <= durationUs) : [];
+  const withSound = useAudio && audioChunks.length > 0; // (a clip shorter than one bit of sound has none)
   // A size cap (the chat's file limit): a lower bitrate, so the whole file fits with its sound (the sound's
   // real size, and some room to spare).
   const audioBytes = audioChunks.reduce((n, c) => n + c.data.byteLength, 0);
@@ -432,7 +433,7 @@ export async function exportVideo({ rec, region, layout, highlights = [], onProg
   const muxer = new Muxer({
     target: new ArrayBufferTarget(),
     video: { codec: enc.muxCodec, width: W, height: H, frameRate: fps },
-    audio: useAudio ? { codec: 'aac', numberOfChannels: rec.audio.numberOfChannels, sampleRate: rec.audio.sampleRate } : undefined,
+    audio: withSound ? { codec: 'aac', numberOfChannels: rec.audio.numberOfChannels, sampleRate: rec.audio.sampleRate } : undefined,
     fastStart: 'in-memory',
     firstTimestampBehavior: 'cross-track-offset',
   });
@@ -548,7 +549,7 @@ export async function exportVideo({ rec, region, layout, highlights = [], onProg
     } catch {}
   }
   const blob = new Blob([muxer.target.buffer], { type: 'video/mp4' });
-  return { blob, width: W, height: H, seconds: total / fps, hasAudio: !!useAudio, notes, codec: enc.config.codec, bitrate: enc.bitrate };
+  return { blob, width: W, height: H, seconds: total / fps, hasAudio: !!withSound, notes, codec: enc.config.codec, bitrate: enc.bitrate };
 }
 
 /* --------------------------- quick preview --------------------------- */

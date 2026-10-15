@@ -10,6 +10,7 @@ import { exportImage, exportPng, exportVideo, previewMp4, X, INKS, inkFor, HIGHL
 import { clamp, fmtTime, sleep } from './media.js';
 import { glassify, prefers } from './glass.js';
 import { countX, X_POST_LIMIT } from './xcount.js';
+import './cleanurl.js'; // (globalThis.annotatedCleanUrl: the page's link, cleaned as the page script does)
 
 const $ = (s) => document.querySelector(s);
 const el = {
@@ -1158,12 +1159,17 @@ async function onKind(kind) {
 
 // Area / post, image or video. Before choosing: how you'll choose. After: choose again that way (your
 // text stays). There's no full-screen button: drag a box, or pull its edges out to the screen's edges.
-function onShape(shape) {
+function onShape(shape, btn = null) {
   if ((busy || sending) && !['idle', 'select'].includes(app.state)) return; // a save, copy or send is under way
   if (app.state === 'idle') return startSelecting(shape);
   if (app.state === 'select') {
-    // The chosen one again: the dark screen goes; the bar (and the chat) stay, nothing chosen.
-    if (shape === app.shape && !app.drag) return enterIdle();
+    // The chosen one again: the dark screen goes; the bar (and the chat) stay, nothing chosen. (Choosing
+    // again, with the text you wrote kept: a second press lets that go too.)
+    if (shape === app.shape && !app.drag) {
+      if (btn && (app.caption || '').trim() && !confirmed(btn)) return armConfirm(btn, 'Press again to put this away, with your text');
+      disarmConfirm();
+      return enterIdle();
+    }
     return setShape(shape);
   }
   if (!['compose', 'armed'].includes(app.state)) return;
@@ -1383,7 +1389,21 @@ function updateCounter() {
   return c;
 }
 
-// X's ring sits just left of the first line of your text, centred on that line.
+// Text that runs right to left (Hebrew, Arabic...), as its first letter says; and whether a character
+// does (a space or a mark: as the text around it).
+const RTL_LETTER = /[\p{sc=Hebrew}\p{sc=Arabic}\p{sc=Syriac}\p{sc=Thaana}\p{sc=Nko}]/u;
+function rtlText(v) {
+  const m = /\p{L}/u.exec(v || '');
+  return !!m && RTL_LETTER.test(m[0]);
+}
+function rtlAt(ch, base) {
+  if (!ch) return base;
+  if (RTL_LETTER.test(ch)) return true;
+  return /[\p{L}\p{N}]/u.test(ch) ? false : base;
+}
+
+// X's ring sits just before the first line of your text (on its left; on its right when the text runs right
+// to left), centred on that line.
 function placeCounter() {
   const c = el.counter;
   if (c.hidden || !app.editing) return;
@@ -1402,9 +1422,11 @@ function placeCounter() {
   const mr = m.getBoundingClientRect();
   const box = el.composer.getBoundingClientRect();
   const size = c.offsetHeight || 30;
-  const x = rects.length ? rects[0].left : mr.left + mr.width / 2;
+  // (Before the first character: on its left, or on its right when the text runs right to left.)
+  const rtl = rtlText(v);
+  const x = rects.length ? (rtl ? rects[0].right : rects[0].left) : mr.left + mr.width / 2;
   const mid = rects.length ? rects[0].top + rects[0].height / 2 : mr.top + mr.height / 2;
-  const left = Math.max(4, x - 14 - size);
+  const left = rtl ? Math.min(box.right - size - 4, x + 14) : Math.max(4, x - 14 - size);
   const top = Math.max(box.top, mid - t.scrollTop - size / 2);
   c.style.left = Math.round(left - box.left) + 'px';
   c.style.top = Math.round(top - box.top) + 'px';
@@ -1445,7 +1467,8 @@ function updateCaret(solid = false) {
   let x;
   let y;
   if (rects.length) {
-    x = rects[0].left - mr.left;
+    // (Right to left: the caret is on the right of the character after it.)
+    x = (rtlAt(node.data[0], rtlText(v)) ? rects[0].right : rects[0].left) - mr.left;
     y = rects[0].top - mr.top;
   } else {
     const r = mark.getBoundingClientRect();
@@ -1583,15 +1606,21 @@ async function enterCompose({ videoHere = false } = {}) {
   refreshSource({ frozen: app.shotFresh !== true });
 }
 
-// The page's address without its query or #, as a stand-in until the page gives its cleaned link: a file
-// on your computer (or anything else not on the web) has no source link.
+// The page's address, cleaned the same way (no logins, keys, codes or email addresses in it), as a
+// stand-in until the page gives its best link: a file on your computer (or anything else not on the web)
+// has no source link.
 function webAddress(href) {
   try {
-    const u = new URL(href);
-    return u.protocol === 'https:' || u.protocol === 'http:' ? u.origin + u.pathname : '';
+    return globalThis.annotatedCleanUrl(href) || '';
   } catch {
     return '';
   }
+}
+
+// Saving or sending waits a moment for the page's best link (a post's own address, a video's time) if
+// it's still on its way.
+function sourceSettled() {
+  return Promise.race([app.sourceWait || Promise.resolve(), sleep(1200)]);
 }
 
 // Ask the page for the best link (a post's own URL on X, the video time on YouTube...).
@@ -1603,7 +1632,7 @@ function refreshSource({ frozen = false } = {}) {
     const v = videoIn(region);
     if (v && typeof v.t === 'number') opts.time = v.t;
   }
-  return page('source', opts)
+  const wait = page('source', opts)
     .then((r) => {
       if (!r || typeof r.url !== 'string' || region !== app.region) return; // ('' : no public source)
       const changed = r.url !== app.source;
@@ -1614,6 +1643,8 @@ function refreshSource({ frozen = false } = {}) {
       }
     })
     .catch(() => {});
+  app.sourceWait = wait;
+  return wait;
 }
 
 function drawMediaFromShot() {
@@ -2088,7 +2119,9 @@ async function saveImage() {
   setBusy(true);
   try {
     if (!(await ensureCommitted())) return;
-    const out = await exportImage({ shot: app.shot.bitmap, shotScale: app.shot.scale, region: app.region, layout: app.layout, highlights: app.highlights, source: app.source, ...(await snipText()) });
+    await sourceSettled();
+    const text = await snipText();
+    const out = await exportImage({ shot: app.shot.bitmap, shotScale: app.shot.scale, region: app.region, layout: app.layout, highlights: app.highlights, source: app.source, ...text });
     const name = fileName('Screenshot', out.ext);
     download(out.blob, name);
     el.bar.classList.add('finished');
@@ -2184,13 +2217,19 @@ async function copyVideo() {
   let wrote = null;
   try {
     wrote = navigator.clipboard.write([new ClipboardItem({ 'web video/mp4': blobP, [CLIP_META]: metaP })]);
-    wrote.catch(() => {});
   } catch (e) {
     wrote = Promise.reject(e);
   }
+  wrote.catch(() => {});
+  // (Chrome refused the clipboard straight away: there's no need to make the video first to find out.)
+  const refused = wrote.then(
+    () => new Promise(() => {}),
+    (e) => Promise.reject(e)
+  );
+  refused.catch(() => {});
   try {
-    if (!(await committedForVideo())) throw Object.assign(new Error('Your text is over 280 characters.'), { quiet: true });
-    const made = await videoMade();
+    if (!(await Promise.race([committedForVideo(), refused]))) throw Object.assign(new Error('Your text is over 280 characters.'), { quiet: true });
+    const made = await Promise.race([videoMade(), refused]);
     give(made.blob);
     await wrote;
     pingWithNotes('copy', made.notes);
@@ -2587,7 +2626,7 @@ async function enterReview(reason) {
   if (wasEditing) openEditor();
   layoutCard(true);
   v.play().catch(() => {});
-  if (reason === 'limit') ping('timer', { text: fmtTime(app.recResult.durationUs / 1e6), ms: 2600 });
+  if (reason === 'limit') ping('timer', { text: fmtTime(Math.round(app.recResult.durationUs / 1e6)), ms: 2600 });
   else if (reason === 'resize') ping('resize', { ms: 2600 });
   else if (reason === 'error') toast('Recording stopped because of an error. What was recorded before it is kept.');
 }
@@ -2969,7 +3008,9 @@ function flyToChat() {
 }
 
 async function pictureForChat() {
-  const out = await exportImage({ shot: app.shot.bitmap, shotScale: app.shot.scale, region: app.region, layout: app.layout, highlights: app.highlights, source: app.source, ...(await snipText()) });
+  await sourceSettled();
+  const text = await snipText();
+  const out = await exportImage({ shot: app.shot.bitmap, shotScale: app.shot.scale, region: app.region, layout: app.layout, highlights: app.highlights, source: app.source, ...text });
   const name = fileName('Screenshot', out.ext);
   return { file: new File([out.blob], name, { type: out.blob.type }), kind: 'image', width: out.width, height: out.height };
 }
@@ -3067,8 +3108,32 @@ function wireUi() {
   for (const g of document.querySelectorAll('.bar.glass')) glassify(g);
   toastGlass = glassify(el.toast, { auto: false });
   glassify(el.boxMenu, { auto: false, rim: 14, blur: 2.6, veilMid: 0.5, lens: 26 }); // right-click the box: glass too
-  // Clicking a button must not take the keyboard away from the typing line.
-  for (const b of document.querySelectorAll('.bar button')) b.addEventListener('pointerdown', (e) => e.preventDefault());
+  // Clicking a button must not take the keyboard away from the typing line. (If the keyboard had gone
+  // to the page meanwhile, the click brings it back: copying needs it here.)
+  for (const b of document.querySelectorAll('.bar button'))
+    b.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      if (app.state !== 'idle' && !document.hasFocus()) window.focus();
+    });
+  // While the dark screen is up, Tab goes round the typing line and the bar's buttons; it never takes the
+  // keyboard to the page under it (or out of the window) by surprise.
+  window.addEventListener(
+    'keydown',
+    (e) => {
+      if (e.key !== 'Tab' || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (['boot', 'closing', 'fatal', 'idle'].includes(app.state)) return;
+      if (el.boxMenu.contains(e.target) || el.inks.contains(e.target)) return; // (Tab closes those)
+      e.preventDefault();
+      const list = [];
+      if (app.editing && !el.composer.hidden) list.push(el.editor);
+      for (const b of document.querySelectorAll('.bar button')) if (!b.disabled && b.getClientRects().length && getComputedStyle(b).visibility === 'visible') list.push(b);
+      if (!list.length) return;
+      const i = list.indexOf(document.activeElement);
+      const next = i < 0 ? list[e.shiftKey ? list.length - 1 : 0] : list[(i + (e.shiftKey ? -1 : 1) + list.length) % list.length];
+      next.focus({ preventScroll: true });
+    },
+    true
+  );
   document.addEventListener(
     'click',
     (e) => {
@@ -3103,7 +3168,7 @@ function wireUi() {
     if (barDragged || !b || b.disabled) return;
     flashPress(b);
     if (b.dataset.kind) return onKind(b.dataset.kind);
-    if (b.dataset.shape) return onShape(b.dataset.shape);
+    if (b.dataset.shape) return e.detail > 1 ? undefined : onShape(b.dataset.shape, b); // (a double-click is one press)
     if (b === el.bClose) return closePressed();
     if (b === el.bRec) return onRec();
     if (b === el.bStop) return onStop();
@@ -3152,10 +3217,11 @@ function wireUi() {
       if (!e.repeat) togglePause(); // (held down, it doesn't flicker on and off)
       return;
     }
-    // Save with Ctrl+S (or ⌘S), from the typing line too, rather than Chrome saving the web page.
-    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 's' && ['compose', 'review'].includes(app.state)) {
+    // Save with Ctrl+S (or ⌘S), from the typing line too, rather than Chrome saving the web page (and
+    // never that, while there's nothing to save yet).
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's') {
       e.preventDefault();
-      if (!e.repeat) commit().then((ok) => ok && save());
+      if (!e.repeat && !e.shiftKey && ['compose', 'review'].includes(app.state)) commit().then((ok) => ok && save());
       return;
     }
     // Copy with nothing selected in the text: copy the picture (like the Copy button).
@@ -3346,7 +3412,9 @@ function onWheel(e) {
 }
 
 function isPrintable(e) {
-  return e.key && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
+  // (AltGr, as on many European keyboards, comes with Ctrl and Alt: its characters, @ say, are typing too.)
+  const altGr = !!(e.getModifierState && e.getModifierState('AltGraph'));
+  return !!e.key && e.key.length === 1 && !e.metaKey && (altGr || (!e.ctrlKey && !e.altKey));
 }
 
 function onKeyDown(e) {
@@ -3366,6 +3434,8 @@ function onKeyDown(e) {
   }
   const st = app.state;
   if (st !== 'idle' && ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(k) && !isPrintable(e)) e.preventDefault();
+  // (Ctrl+S saves what you made, when there's something to save; it never opens Chrome's Save page.)
+  if (st !== 'idle' && (e.ctrlKey || e.metaKey) && !e.altKey && k.toLowerCase() === 's' && !['compose', 'review'].includes(st)) return e.preventDefault();
   if (k === ' ' && spacePauses(e)) {
     e.preventDefault();
     return e.repeat ? undefined : togglePause();
@@ -3416,6 +3486,7 @@ function onResize() {
     return;
   }
   if (app.state === 'recording') return stopRecording('resize');
+  if (app.state === 'compose') app.shotStale = true; // (choosing again takes a new picture: this one no longer fits)
   if (app.state === 'armed' || app.state === 'countdown') {
     if (app.state === 'countdown') cancelCountdown();
     enterSelect({ fresh: true });

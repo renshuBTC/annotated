@@ -63,8 +63,21 @@
     }
     if (msg.type === 'snip:open') {
       if (ui) teardown();
-      open(msg.token, msg.mode);
-      reply({ ok: true });
+      // (An SVG picture or an XML file opened on its own isn't a web page: there's nowhere to put the bar.)
+      const de = document.documentElement;
+      if (!de || de.namespaceURI !== 'http://www.w3.org/1999/xhtml') {
+        reply({ error: 'notHtml' });
+        return false;
+      }
+      try {
+        open(msg.token, msg.mode);
+        reply({ ok: true });
+      } catch (e) {
+        try {
+          teardown();
+        } catch {}
+        reply({ error: String((e && e.message) || e) });
+      }
       return false;
     }
     return false;
@@ -145,9 +158,9 @@
     // overlay takes clicks until the bar is drawn, and then only the bar does. The keyboard stays with
     // the page (and the chat) until you press 📷 or 🎥.
     const fromIcon = mode === 'bar';
-    ui = { host, frame, port: channel.port1, token, hole: null, keep: [], only: fromIcon ? [] : null, scale: 1, ready: false, opened: Date.now(), pendingAck: null, dialog: null };
+    ui = { host, frame, port: channel.port1, token, hole: null, keep: [], only: fromIcon ? [] : null, scale: 1, ready: false, opened: Date.now(), pendingAck: null, dialog: null, modals: [] };
     if (modal) inDialog(modal);
-    ui.dialogs = new MutationObserver(followDialogs);
+    ui.dialogs = new MutationObserver(onDialogs);
     ui.dialogs.observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['open'] });
     window.addEventListener('focusin', onFocusIn, true); // (a dialog in a web component: focus goes into it)
     if (fromIcon) applyHole();
@@ -218,12 +231,39 @@
   // too. While one is open, the overlay is inside it (moved, so it isn't reloaded: what you're making
   // stays), shown again above it; when it closes, the overlay goes back out (before the page can take
   // the dialog away).
+  // The one on top is the one opened last (ui.modals, in the order they opened while the bar was up);
+  // ones already open before that: the last in the page.
   function modalDialog() {
+    const isModal = (d) => {
+      try {
+        return d.isConnected && d.matches(':modal');
+      } catch {
+        return false;
+      }
+    };
+    const seen = (ui && ui.modals) || [];
+    for (let i = seen.length - 1; i >= 0; i--) if (isModal(seen[i])) return seen[i];
     let top = null;
     try {
-      for (const d of document.querySelectorAll('dialog')) if (d.matches(':modal')) top = d;
+      for (const d of document.querySelectorAll('dialog')) if (isModal(d)) top = d;
     } catch {}
     return top;
+  }
+  function onDialogs(records) {
+    if (!ui) return;
+    for (const r of records || []) {
+      const d = r.target;
+      if (!d || d.tagName !== 'DIALOG') continue;
+      const i = ui.modals.indexOf(d);
+      if (i >= 0) ui.modals.splice(i, 1);
+      let modal = false;
+      try {
+        modal = d.matches(':modal');
+      } catch {}
+      if (modal) ui.modals.push(d);
+    }
+    if (ui.modals.length > 50) ui.modals.splice(0, ui.modals.length - 50);
+    followDialogs();
   }
   function moveHost(to) {
     if (!ui || ui.host.parentNode === to) return;
@@ -933,8 +973,13 @@
     let budget = 60000; // places looked at, at most
     let over = false;
     const take = (n) => {
-      const p = n.parentElement;
-      if (!p || !visible(p) || unreadable(p)) return;
+      // (Its element; straight in a web component's shadow root: the component. An element with no box of
+      // its own, display: contents, shows its text if what holds it shows: it's asked instead.)
+      const p = n.parentElement || (n.parentNode && n.parentNode.host) || null;
+      if (!p) return;
+      let shown = p;
+      while (shown && style(shown).display === 'contents') shown = up(shown);
+      if (!shown || !visible(shown) || style(p).visibility !== 'visible' || unreadable(p)) return;
       // Where this text is, all of it (most of a page's text is nowhere near the area).
       range.selectNodeContents(n);
       const nb = range.getBoundingClientRect();
@@ -1032,9 +1077,12 @@
         }
         if (n.nodeType === Node.TEXT_NODE) {
           if (n.data.trim()) take(n);
-        } else if (n.shadowRoot) {
-          walk(n.shadowRoot);
-          if (over) return;
+        } else {
+          const sr = n.shadowRoot || (n.tagName.includes('-') && chrome.dom && chrome.dom.openOrClosedShadowRoot ? chrome.dom.openOrClosedShadowRoot(n) : null);
+          if (sr) {
+            walk(sr);
+            if (over) return;
+          }
         }
       }
     };
@@ -1238,106 +1286,12 @@
 
   /* ---------- the source link ---------- */
 
-  const TRACKING = /^(utm_[a-z_]+|fbclid|gclid|dclid|gbraid|wbraid|msclkid|yclid|ttclid|twclid|igshid|igsh|mc_cid|mc_eid|_ga|_gl|mkt_tok|spm|vero_id|oly_anon_id|oly_enc_id|rb_clickid|trk|trkCampaign|sc_campaign|hsCtaTracking|__hssc|__hstc|__hsfp|_hsenc|_hsmi|hsa_[a-z]+|ck_subscriber_id|ml_subscriber|ml_subscriber_hash|elqTrackId|elqTrack|ref_src|ref_url|cmpid|ncid|sr_share|share_id|si)$/i;
-
-  // Secrets in an address (it ends up in a public picture and the chat): any parameter whose name has
-  // one of these words in it (reset_password_token, oauth_token, key, code + state, rlkey, jwt...), and
-  // any value that looks like a key or a login token, whatever its name.
-  const SECRET_WORDS = new Set(['token', 'tokens', 'secret', 'password', 'passwd', 'pwd', 'pass', 'passcode', 'auth', 'authorization', 'oauth', 'session', 'sessionid', 'sid', 'sig', 'signature', 'key', 'apikey', 'rlkey', 'code', 'ticket', 'jwt', 'otp', 'nonce', 'verifier', 'state', 'credential', 'credentials', 'private', 'access', 'refresh', 'saml', 'assertion', 'magic', 'invite', 'confirmation', 'reset']);
-  // (Also run together, as many sites write them: accesstoken, PHPSESSID, JSESSIONID, CFTOKEN, csrf...)
-  const SECRET_PARTS = /token|secret|passw|sessid|sessionid|apikey|csrf|xsrf|credential/;
-  function secretName(name) {
-    const words = String(name)
-      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-      .toLowerCase()
-      .split(/[^a-z0-9]+/);
-    if (words.some((w) => SECRET_WORDS.has(w)) || /^x-(amz|goog)-/i.test(name)) return true;
-    const flat = String(name).toLowerCase().replace(/[^a-z0-9]/g, '');
-    return SECRET_PARTS.test(flat) || /^(cfid|zenid|oscsid)$/.test(flat);
-  }
-  function secretValue(v) {
-    if (/^eyJ[\w-]{6,}\.[\w-]+\.[\w-]*$/.test(v)) return true; // a JWT
-    return v.length >= 40 && /^[\w\-.~+/=]+$/.test(v) && /\d/.test(v) && /[a-z]/i.test(v); // a long key
-  }
-  // An email address: never in a public link (?email=…, ?authuser=…, a path like /users/jane@…).
-  const EMAIL = /[^\s@/?#&=;:]+@[^\s@/?#&=;:]+\.[a-z]{2,}/i;
-  // A part of the path right after one of these words is a one-time code (/reset-password/9f86…,
-  // /invite/AbC123…); whole words only (an /author/ isn't /auth/).
-  const CODE_BEFORE = new Set(['reset', 'password', 'passwd', 'verify', 'verification', 'confirm', 'confirmation', 'activate', 'activation', 'invite', 'invitation', 'magic', 'token', 'unsubscribe', 'login', 'signin', 'auth', 'oauth', 'sso', 'otp']);
-  function codeAfter(seg) {
-    return String(seg)
-      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-      .toLowerCase()
-      .split(/[^a-z0-9]+/)
-      .some((w) => CODE_BEFORE.has(w));
-  }
-
+  // The page's link, cleaned for a public picture (cleanurl.js, injected just before this script): logins,
+  // tracking tags, secrets and email addresses go. Whatever is after # stays only when it's a quote, an
+  // app's own page (#/…), or an anchor on this very page.
   function cleanUrl(href) {
-    let u;
-    try {
-      u = new URL(href);
-    } catch {
-      return '';
-    }
-    if (u.protocol !== 'https:' && u.protocol !== 'http:') return ''; // (a file on your computer has no public source)
-    // The link ends up in a public image: drop logins, tracking tags and secrets. The parameters kept
-    // stay exactly as they were written.
-    u.username = '';
-    u.password = '';
-    const dec = (x) => {
-      try {
-        return decodeURIComponent(x.replace(/\+/g, ' '));
-      } catch {
-        return x;
-      }
-    };
-    const raw = (x) => {
-      try {
-        return decodeURIComponent(x);
-      } catch {
-        return x;
-      }
-    };
-    // A login kept in the path itself (/page;jsessionid=…) goes too.
-    if (u.pathname.includes(';')) u.pathname = u.pathname.replace(/;([^/;=]*)=([^/;]*)/g, (all, n, v) => (secretName(dec(n)) || secretValue(dec(v)) ? '' : all));
-    // So does the path from an email address, a JWT or a one-time code in it onwards.
-    const segs = u.pathname.split('/');
-    for (let i = 1; i < segs.length; i++) {
-      const seg = raw(segs[i]);
-      const code = seg.length >= 16 && /^[\w\-.~+=]+$/.test(seg) && /\d/.test(seg) && /[a-z]/i.test(seg) && codeAfter(raw(segs[i - 1]));
-      if (EMAIL.test(seg) || /^eyJ[\w-]{6,}\.[\w-]+\.[\w-]*$/.test(seg) || code) {
-        u.pathname = segs.slice(0, i).join('/') + '/';
-        break;
-      }
-    }
-    const kept = u.search
-      .slice(1)
-      .split('&')
-      .filter((pair) => {
-        if (!pair) return false;
-        const eq = pair.indexOf('=');
-        const name = dec(eq < 0 ? pair : pair.slice(0, eq));
-        const value = eq < 0 ? '' : dec(pair.slice(eq + 1));
-        const rawValue = eq < 0 ? '' : raw(pair.slice(eq + 1)); // (a key with + in it: as written)
-        return !(TRACKING.test(name) || secretName(name) || secretValue(value) || secretValue(rawValue) || EMAIL.test(name) || EMAIL.test(value));
-      });
-    u.search = kept.length ? '?' + kept.join('&') : '';
-    // After #: a highlighted quote (#:~:text=…) or a real anchor on this page stays; anything else goes
-    // (some sites keep keys there: #access_token=…, file-sharing links' decryption keys).
-    const h = u.hash;
-    if (h && EMAIL.test(raw(h))) u.hash = '';
-    else if (h && !h.startsWith('#:~:')) {
-      let anchor = false;
-      try {
-        const id = decodeURIComponent(h.slice(1));
-        anchor = id.length <= 80 && !!document.getElementById(id) && location.href.split('#')[0] === href.split('#')[0];
-      } catch {}
-      if (!anchor) u.hash = '';
-    }
-    let out = u.toString();
-    if (out.endsWith('?')) out = out.slice(0, -1);
-    if (out.endsWith('#')) out = out.slice(0, -1);
-    return out;
+    const same = location.href.split('#')[0] === String(href).split('#')[0];
+    return globalThis.annotatedCleanUrl(href, { isAnchor: (id) => same && !!document.getElementById(id) });
   }
 
   function mainVideoIn(rect) {

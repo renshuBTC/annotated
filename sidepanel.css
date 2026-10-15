@@ -172,6 +172,9 @@ a.media.viewing::after { content: ''; position: absolute; inset: 0; border-radiu
 .post.annot .card:has(> a.media.viewing) { border-color: var(--yellow); box-shadow: 0 0 0 2px var(--yellow); }
 .post.annot a.media.viewing::after { content: none; }
 .media.missing { padding: 10px 12px; color: var(--ink-3); font-size: var(--small); }
+/* One that didn't load (offline, say): press it to try again. */
+button.media.retry { width: 100%; border: 0; background: transparent; color: var(--ink); text-align: inherit; font: inherit; font-size: var(--small); cursor: pointer; }
+button.media.retry:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
 
 /* Likes: one neat pill, 👍 then who (up to three round faces, overlapping,
    then a number), everything centred on one line and the last face inset evenly from the pill's
@@ -332,6 +335,9 @@ a.media.viewing::after { content: ''; position: absolute; inset: 0; border-radiu
 .menu button.armed { background: var(--press); color: #fff; }
 .menu button.armed .i { color: #fff; }
 .menu button.on .i { fill: currentColor; color: var(--blue); }
+/* Go to source link: where it goes, after it (the whole address on hover). */
+.menu button .host { margin-left: auto; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--small); color: var(--ink); }
+.menu button .host:empty { display: none; }
 
 /* File a claim and Ask AI: small windows over the chat. One size of type (bold for the title and the parts),
    all black on white: nothing dimmed. */

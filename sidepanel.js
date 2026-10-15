@@ -322,7 +322,7 @@ function randomName() {
 // server does the same).
 function cleanName(s) {
   return String(s || '')
-    .replace(/[\u00AD\u034F\u115F\u1160\u17B4\u17B5\u180E\u200B-\u200F\u202A-\u202E\u2060-\u206F\u2800\u3164\uFEFF\uFFA0]/g, '')
+    .replace(/[\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B-\u200F\u202A-\u202E\u2060-\u206F\u2800\u3164\uFEFF\uFFA0\uFFF9-\uFFFB\u{1D173}-\u{1D17A}\u{E0000}-\u{E007F}]/gu, '')
     .replace(/[@＠﹫]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
@@ -363,21 +363,30 @@ async function endEditName(save) {
   el.text.focus();
 }
 
-async function ensureSignedIn() {
-  if (state.uid) return state.uid;
-  const {
-    data: { session },
-  } = await sb.auth.getSession();
-  if (session && session.user) {
-    state.uid = session.user.id;
-    setMe(session.user);
-    return state.uid;
+// (One sign-in at a time: a like and a send at once share it, so they're never two different people.)
+let signingIn = null;
+function ensureSignedIn() {
+  if (state.uid) return Promise.resolve(state.uid);
+  if (!signingIn) {
+    signingIn = (async () => {
+      const {
+        data: { session },
+      } = await sb.auth.getSession();
+      let user = session && session.user;
+      if (!user) {
+        const { data, error } = await sb.auth.signInAnonymously();
+        if (error) throw error;
+        user = data.user;
+      }
+      state.uid = user.id;
+      setMe(user);
+      if (state.seenQueue.size) tellSeen(); // (what you'd seen meanwhile is counted now)
+      return state.uid;
+    })().finally(() => {
+      signingIn = null;
+    });
   }
-  const { data, error } = await sb.auth.signInAnonymously();
-  if (error) throw error;
-  state.uid = data.user.id;
-  setMe(data.user);
-  return state.uid;
+  return signingIn;
 }
 
 // The X account you're signed in with, from your sign-in (Supabase's own record of it).
@@ -479,8 +488,21 @@ function makeMedia(p) {
   if (!PATH_OK.test(p.media_path || '')) return node('div', 'media missing', 'This attachment can’t be shown.');
   const url = publicUrl(p.media_path);
   const src = localMedia.get(p.media_path) || url;
+  const what = p.media_type === 'video' ? 'video' : 'picture';
+  // It didn't load: gone for good only if the server says so; otherwise (offline, a slow connection) it
+  // says so and tries again, when you're back online or press it.
   const gone = (box) => {
-    box.replaceWith(node('div', 'media missing', p.media_type === 'video' ? 'This video is no longer available.' : 'This picture is no longer available.'));
+    fetch(url, { method: 'HEAD', cache: 'no-store' })
+      .then((r) => r.status === 400 || r.status === 404, () => false)
+      .then((really) => {
+        if (!box.isConnected) return;
+        if (really) return box.replaceWith(node('div', 'media missing', `This ${what} is no longer available.`));
+        const again = node('button', 'media missing retry', `This ${what} didn’t load. Press to try again.`);
+        again.type = 'button';
+        again.dataset.retry = p.id;
+        again.addEventListener('click', () => redraw(p.id));
+        box.replaceWith(again);
+      });
   };
   if (p.media_type === 'video') {
     const box = node('div', 'media');
@@ -511,7 +533,7 @@ function makeMedia(p) {
     if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
     e.preventDefault();
     const closing = viewer.postId === p.id;
-    if (!closing && canReply(p) && el.list.contains(a)) setReply(state.posts.get(p.id) || p);
+    if (!closing && el.list.contains(a)) replyByClick(p, { quiet: true });
     toggleViewer(p);
   });
   const img = document.createElement('img');
@@ -772,8 +794,22 @@ function tellSeen() {
     if (!state.uid || state.viewsOff) return;
     const ids = [...state.seenQueue].slice(0, 100);
     ids.forEach((id) => state.seenQueue.delete(id));
-    const { error } = await sb.rpc('chat_seen', { ids });
+    let error = null;
+    try {
+      ({ error } = await sb.rpc('chat_seen', { ids }));
+    } catch (e) {
+      error = e || {};
+    }
     if (error && (error.code === 'PGRST202' || error.code === '42883')) state.viewsOff = true; // (not set up)
+    else if (error) {
+      // (Not counted this time, offline say: they're kept, and tried again a little later.)
+      ids.forEach((id) => state.seenQueue.add(id));
+      seenTimer = setTimeout(() => {
+        seenTimer = 0;
+        tellSeen();
+      }, 15000);
+      return;
+    }
     if (state.seenQueue.size) tellSeen();
   }, 700);
 }
@@ -868,6 +904,7 @@ function render({ arrive = null, land = false } = {}) {
     li.classList.toggle('reply', depth > 0);
     li.classList.toggle('has-kids', kids > 0);
     li.classList.toggle('orphan', depth === 0 && !!(p.reply_to || p.reply_name || p.reply_gone));
+    li.classList.toggle('target', !!state.replyTo && state.replyTo.id === p.id);
     li.style.setProperty('--depth', String(Math.min(depth, MAX_DEPTH)));
     if (arrive && arrive.has(p.id)) li.classList.add(land ? 'land' : 'arrive');
     want.push(li);
@@ -981,10 +1018,21 @@ function toNewest() {
 function dropPost(id) {
   state.deleted.add(id);
   state.likes.delete(id);
-  if (state.replyTo && state.replyTo.id === id) setReply(null);
+  captions.delete(id);
+  if (state.replyTo && state.replyTo.id === id) {
+    setReply(null);
+    setBanner('The post you were replying to has just been deleted.', { ms: 5000 });
+  }
   if (menu.post && menu.post.id === id) closeMenu();
   if (claimFor && claimFor.id === id && el.claim.open) claimError('That post has just been deleted.');
-  if (ask && ask.post.id === id && el.ask.open) setAskStatus('That post has just been deleted.');
+  if (ask && ask.post.id === id && el.ask.open) {
+    // (Its check stops here: nothing more is written over this, and nothing is kept for it.)
+    ask.ctrl.abort();
+    try {
+      if (ask.session) ask.session.destroy();
+    } catch {}
+    setAskStatus('That post has just been deleted.');
+  }
   if (state.search && state.search.rows.delete(id)) {
     const li = el.results.querySelector(`.post[data-id="${CSS.escape(id)}"]`);
     if (li) li.remove();
@@ -1184,6 +1232,25 @@ function onLike(l) {
 /* Reply, like, delete, copy the source link                           */
 /* ------------------------------------------------------------------ */
 
+// A click (or Enter, or a press on its picture) on an annotation starts your reply to it, as Reply in its
+// menu does. While you're writing a reply to another post, a click doesn't move it here (that post's
+// Reply does): it says so, rather than your words going under a post you didn't mean. While searching,
+// the search closes first (the box is for searching then).
+function replyByClick(p, { quiet = false } = {}) {
+  p = p && (state.posts.get(p.id) || p);
+  if (!p || !canReply(p)) return;
+  if (state.replyTo && state.replyTo.id === p.id) return el.text.focus();
+  if (state.replyTo && el.text.value.trim()) {
+    if (!quiet) setBanner(`You're writing a reply to ${displayName(state.replyTo)}. Send it or press ✕ first.`, { ms: 4000 });
+    return;
+  }
+  if (state.search) {
+    closeSearch({ keepScroll: true });
+    revealPost(p.id);
+  }
+  setReply(p);
+}
+
 // Reply (click an annotation, or right-click it → Reply): above the box, only the caption of what you're answering (cut
 // from their annotation: the white part under its thin black line), or the words of a text post; the
 // post itself is outlined in the chat. Your post goes under theirs. ✕ or Esc stops replying.
@@ -1220,9 +1287,18 @@ function setReply(p) {
 
 // The caption of an annotation, cut from its picture (or a video's first frame): the white part under
 // the thin black line at the bottom, trimmed to what's written there. null if it hasn't got one.
-const captions = new Map(); // post id -> canvas | null
+const captions = new Map(); // post id -> canvas | null (the last few only)
 function captionOf(p) {
-  if (!captions.has(p.id)) captions.set(p.id, frameOf(p).then(cutCaption).catch(() => null));
+  if (!captions.has(p.id)) {
+    const job = frameOf(p)
+      .then(cutCaption)
+      .catch(() => {
+        if (captions.get(p.id) === job) captions.delete(p.id); // (didn't load: tried again next time)
+        return null;
+      });
+    captions.set(p.id, job);
+    while (captions.size > 12) captions.delete(captions.keys().next().value);
+  }
   return captions.get(p.id);
 }
 
@@ -1249,6 +1325,7 @@ async function frameOf(p) {
       v.addEventListener('loadeddata', () => (clearTimeout(t), res()), { once: true });
       v.addEventListener('error', () => (clearTimeout(t), rej(new Error('video'))), { once: true });
     });
+    if (!(v.videoWidth * v.videoHeight <= 40e6)) throw new Error('too big'); // (as for a picture)
     const c = new OffscreenCanvas(v.videoWidth, v.videoHeight);
     c.getContext('2d').drawImage(v, 0, 0);
     return c;
@@ -1349,10 +1426,14 @@ function cutCaption(src) {
   const top = ruleBottom + 1;
   const pad = Math.round((last - top) * 0.12);
   const bottom = Math.min(H, last + 1 + pad);
+  // (Kept no bigger than the reply bar can show it, on a sharp screen.)
+  const w = right - left;
+  const h = bottom - top;
+  const k = Math.min(1, 800 / w);
   const out = document.createElement('canvas');
-  out.width = right - left;
-  out.height = bottom - top;
-  out.getContext('2d').drawImage(src, left, top, out.width, out.height, 0, 0, out.width, out.height);
+  out.width = Math.max(1, Math.round(w * k));
+  out.height = Math.max(1, Math.round(h * k));
+  out.getContext('2d').drawImage(src, left, top, w, h, 0, 0, out.width, out.height);
   return out;
 }
 
@@ -1803,7 +1884,11 @@ function openMenu(li, x, y, { keyboard = false } = {}) {
   const kind = copyKind(p);
   copy.hidden = !kind;
   copy.querySelector('.lbl').textContent = kind === 'video' ? 'Copy video' : kind === 'text' ? 'Copy text' : 'Copy image';
-  m.querySelector('[data-act="source"]').hidden = !(p.media_path && isWebLink(p.source));
+  const src = m.querySelector('[data-act="source"]');
+  src.hidden = !(p.media_path && isWebLink(p.source));
+  // (Where it goes, as the link drawn in the picture is only part of the picture.)
+  src.querySelector('.host').textContent = src.hidden ? '' : hostOf(p.source);
+  src.title = src.hidden ? '' : p.source;
   m.querySelector('[data-act="ask"]').hidden = !canAsk(p);
   m.querySelector('[data-act="claim"]').hidden = !!(state.uid && p.user_id === state.uid);
   // A line only between two groups that both have something in them.
@@ -1866,7 +1951,11 @@ function onMenu(act) {
   if (act === 'reply') {
     if (!canReply(p)) return;
     closeMenu();
-    if (state.search) closeSearch({ keepScroll: true });
+    if (state.search) {
+      closeSearch({ keepScroll: true });
+      setReply(p);
+      return jumpTo(p.id); // (to it in the chat, loading earlier posts if need be)
+    }
     return setReply(p);
   }
   if (act === 'like') {
@@ -2598,7 +2687,7 @@ function wire() {
     if (sel && !sel.isCollapsed && sel.toString().trim()) return;
     const li = e.target.closest('.post.annot');
     const p = li && state.posts.get(li.dataset.id);
-    if (p && canReply(p)) setReply(p);
+    if (p) replyByClick(p);
   });
 
   // Paste a picture (Annotated.com's Copy puts one on the clipboard, with where it's from), a video
@@ -2652,7 +2741,7 @@ function wire() {
       const p = state.posts.get(li.dataset.id);
       if (p && canReply(p)) {
         e.preventDefault();
-        return setReply(p); // (as a click does: your reply to it)
+        return replyByClick(p); // (as a click does: your reply to it)
       }
     }
     if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
@@ -2683,9 +2772,29 @@ function wire() {
       closeMenu();
     }
   });
+  // A press outside the menu closes it; one on a post only closes it (its click doesn't also start a reply
+  // or open a picture). Buttons and the box work as usual.
+  let swallowUntil = 0;
   document.addEventListener('pointerdown', (e) => {
-    if (!el.menu.hidden && !el.menu.contains(e.target)) closeMenu();
+    swallowUntil = 0;
+    if (!el.menu.hidden && !el.menu.contains(e.target)) {
+      closeMenu();
+      const onPost = e.target.closest && e.target.closest('.post') && !e.target.closest('button, input, textarea, video, .likes');
+      if (e.button === 0 && onPost) swallowUntil = performance.now() + 1000;
+    }
   });
+  document.addEventListener(
+    'click',
+    (e) => {
+      if (!swallowUntil) return;
+      const swallow = performance.now() < swallowUntil;
+      swallowUntil = 0;
+      if (!swallow) return;
+      e.preventDefault();
+      e.stopPropagation();
+    },
+    true
+  );
   document.addEventListener('keydown', (e) => {
     if (el.claim.open || el.ask.open) return; // the claim form (or Ask AI) has the keys (Esc closes just it)
     if (e.key === 'Escape' && !el.menu.hidden) return closeMenu();
@@ -2778,6 +2887,7 @@ function wire() {
   window.addEventListener('online', () => {
     if (el.banner.dataset.kind === 'live') setBanner(null);
     catchUp();
+    for (const b of document.querySelectorAll('.media.retry')) redraw(b.dataset.retry); // (pictures that didn't load: again)
   });
   new ResizeObserver(setDockHeight).observe(document.querySelector('.dock'));
 }
