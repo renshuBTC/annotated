@@ -334,6 +334,7 @@
     if (!ui) return;
     const { host, port, watchdog, guard, dialogs, dialog } = ui;
     ui = null;
+    followed = null;
     if (dialogs) dialogs.disconnect();
     if (dialog) dialog.removeEventListener('beforetoggle', onDialogToggle);
     window.removeEventListener('focusin', onFocusIn, true);
@@ -544,6 +545,9 @@
         case 'videos':
           result = listVideos();
           break;
+        case 'media':
+          result = await followRecording(m.action, m.rect, m);
+          break;
         case 'source':
           result = bestSource(m.rect, m);
           break;
@@ -726,6 +730,87 @@
       out.push({ ...r, kind: 'embed' });
     }
     return out;
+  }
+
+  /* ---------- the video in your area plays along with the recording ---------- */
+  // Recording starts (after the countdown) or goes on: the page's video in your area plays. Paused or
+  // stopped: it pauses. So you never press both, and the clip starts where the video does. (A player in
+  // another site's frame, like a YouTube video embedded in an article, can't be reached from here.)
+  let followed = null; // the video playing along with this recording
+
+  // Every <video> on the page, in shadow roots too (a custom element's closed one included).
+  function allVideos() {
+    const out = [];
+    const walk = (root, depth) => {
+      root.querySelectorAll('video').forEach((v) => out.push(v));
+      if (depth > 4) return;
+      const w = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+      for (let n = w.nextNode(); n; n = w.nextNode()) {
+        if (ui && n === ui.host) continue;
+        const sr = n.shadowRoot || (n.tagName.includes('-') && chrome.dom && chrome.dom.openOrClosedShadowRoot ? chrome.dom.openOrClosedShadowRoot(n) : null);
+        if (sr) walk(sr, depth + 1);
+      }
+    };
+    try {
+      walk(document, 0);
+    } catch {}
+    return out;
+  }
+
+  // The video your area is on: the one covering most of it. A page's background loop (muted, looping,
+  // no controls) only when there's no other.
+  function videoToFollow(rect) {
+    let best = null;
+    let bestScore = 0;
+    for (const v of allVideos()) {
+      const r = rectOf(v);
+      if (r.w < 80 || r.h < 45 || !isShown(v)) continue;
+      const a = overlap(r, rect);
+      if (!a || Math.max(a / (r.w * r.h), a / (rect.w * rect.h)) < 0.3) continue; // (just a corner of it)
+      const score = a * (v.muted && v.loop && !v.controls ? 0.001 : 1);
+      if (score > bestScore) {
+        bestScore = score;
+        best = v;
+      }
+    }
+    return best;
+  }
+
+  // action: 'play' (the recording starts, or goes on: m.from 'start' | 'resume'), 'pause' or 'stop'.
+  async function followRecording(action, rect, m = {}) {
+    const now = rect ? videoToFollow(rect) : null;
+    if (action === 'play') {
+      followed = now;
+      if (!now) {
+        // Only another site's player there (no video of the page's own): it can't be started from here.
+        const embed = rect && !!document.querySelector('iframe') && listVideos().some((x) => x.kind === 'embed' && overlap(x, rect) > 0.3 * Math.min(x.w * x.h, rect.w * rect.h));
+        return { video: false, embed };
+      }
+      if (!now.paused) return { video: true, playing: true };
+      if (now.ended && m.from === 'resume') return { video: true, playing: false }; // (it finished: it stays at its end)
+      try {
+        const p = now.play();
+        // A refusal comes at once; starting can take longer while it loads (a late failure: nothing to do).
+        if (p) {
+          p.catch(() => {});
+          await Promise.race([p, new Promise((r) => setTimeout(r, 250))]);
+        }
+      } catch (e) {
+        return { video: true, playing: false, blocked: !!e && e.name === 'NotAllowedError' };
+      }
+      return { video: true, playing: true };
+    }
+    // Paused or stopped: the video playing along pauses (and one playing in your area now, if it's
+    // another: you may have scrolled on to it).
+    let paused = 0;
+    for (const v of new Set([followed, now])) {
+      if (v && !v.paused) {
+        v.pause();
+        paused++;
+      }
+    }
+    if (action === 'stop') followed = null;
+    return { video: !!(followed || now), paused };
   }
 
   /* ---------- window mode: pick a meaningful element under the pointer ---------- */

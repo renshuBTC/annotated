@@ -36,9 +36,9 @@ Click the icon (or press **Alt+Shift+S**). The bar appears at the top of the pag
 | 🎥 Screen recording | Make a video. |
 | ▭ Select an area | Drag a box around what you want. |
 | ▤ Select a post, image or video | Click the thing you want, and the box fits it. |
-| ● Record | Start recording your area, after a 2-second countdown. A recording stops by itself at 90 seconds. |
-| ❚❚ Pause | Pause the recording. Press again to carry on. |
-| ■ Stop | Stop the recording (**Esc** does too). |
+| ● Record | Start recording your area, after a 2-second countdown. A video in your area starts playing at the same moment. A recording stops by itself at 90 seconds. |
+| ❚❚ Pause | Pause the recording, and a video in your area with it. Press again to carry on. |
+| ■ Stop | Stop the recording (**Esc** does too). A video in your area pauses. |
 | 0:00 | How long the recording is. |
 | 🖍 Highlighter | Choose the highlighter's colour. |
 | ↶ Undo | Remove your last highlight. |

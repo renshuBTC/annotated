@@ -1216,10 +1216,24 @@ function onStop() {
 // where it stopped, so you can scroll or move on to the next part in between. The time stands still.
 function togglePause() {
   if (app.state !== 'recording' || !app.rec) return;
-  if (app.rec.paused) app.rec.resume();
-  else app.rec.pause();
+  // The page's video in your area pauses and goes on with it.
+  if (app.rec.paused) {
+    app.rec.resume();
+    videoFollows('play', 'resume');
+  } else {
+    videoFollows('pause');
+    app.rec.pause();
+  }
   app.paused = app.rec.paused;
   syncBar();
+}
+
+// The page's video in your area plays along with the recording: it starts when the recording does
+// (after the countdown) or goes on, and pauses when it's paused or stopped. So you never press both.
+// Never waits long: a page that doesn't answer doesn't hold the recording up.
+function videoFollows(action, from = '') {
+  if (!app.region) return Promise.resolve(null);
+  return Promise.race([page('media', { action, from, rect: app.region }), sleep(1000).then(() => null)]).catch(() => null);
 }
 
 // Space pauses or goes on while recording, except while you're writing your text (then it's a space).
@@ -2472,6 +2486,12 @@ async function startRecording() {
     releaseStream();
     return backToArmed('Recording could not start: ' + ((e && e.message) || e));
   }
+  // The video in your area starts now too (not during the countdown: the clip starts where it does).
+  videoFollows('play', 'start').then((r) => {
+    if (!r || app.rec !== rec || app.state !== 'recording') return;
+    if (r.blocked) toast('The page didn’t let its video start by itself: press play on it.', { ms: 4500 });
+    else if (r.embed) toast('This video is in another site’s player, so it can’t start with the recording: press play on it.', { ms: 5000 });
+  });
   app.paused = false;
   setState('recording');
   el.region.classList.add('live');
@@ -2570,6 +2590,7 @@ function forwardAudio(ad) {
 
 async function stopRecording(reason) {
   if (app.state !== 'recording' || !app.rec) return;
+  videoFollows('stop'); // (the page's video in your area pauses as the recording ends)
   app.paused = false;
   setState('stopping');
   clearInterval(app.tickTimer);
