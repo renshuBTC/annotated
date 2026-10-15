@@ -738,8 +738,9 @@
   // Recording starts (after the countdown) or goes on: the page's video in your area plays. Paused or
   // stopped: it pauses. So you never press both, and the clip starts where the video does. (A player in
   // another site's frame, like a YouTube video embedded in an article, can't be reached from here.)
-  // One that's already playing (X and TikTok play them by themselves) waits during the countdown; a
-  // clip short enough to fit starts over from the beginning, and the recording stops where it ends.
+  // One that's already playing (X and TikTok play them by themselves) waits where it is during the
+  // countdown, so your clip starts at the moment you pressed record, wherever that is in the video. The
+  // recording stops if the video ends.
   let followed = null; // the video playing along with this recording
   let held = null; // { v, playing, onPlay } while the countdown runs
   let watched = null; // { v, onEnded, loop } the video whose end ends the recording
@@ -749,15 +750,14 @@
     return overlap(rectOf(v), rect) / Math.max(1, rect.w * rect.h);
   }
 
-  // The countdown starts: the video waits for the recording (it doesn't run on, unrecorded). An
-  // already playing clip that fits in one recording goes back to its start, so all of it is in the clip.
-  function holdVideo(rect, limit) {
+  // The countdown starts: the video waits for the recording right where it is (it doesn't run on,
+  // unrecorded), and plays from there when the recording starts.
+  function holdVideo(rect) {
     unhold(false);
     const v = videoToFollow(rect);
     if (!v) return { video: false };
     const playing = !v.paused && !v.ended;
     const subject = shareOf(v, rect) >= SUBJECT;
-    const restart = playing && subject && Number.isFinite(v.duration) && v.duration > 0 && v.duration <= limit;
     // Muted (as autoplaying feeds start them): its sound won't be in the clip. Said only for the video
     // you're recording, and not for one with no sound to lose (one that played and decoded no sound).
     const sound = !('webkitAudioDecodedByteCount' in v) || v.webkitAudioDecodedByteCount > 0 || v.currentTime < 0.5;
@@ -774,14 +774,9 @@
       }
     };
     if (playing) v.pause();
-    if (restart) {
-      try {
-        v.currentTime = 0;
-      } catch {}
-    }
-    held = { v, playing, onPlay, at: restart ? 0 : v.currentTime };
+    held = { v, playing, onPlay, at: v.currentTime };
     v.addEventListener('play', onPlay);
-    return { video: true, playing, restart, muted };
+    return { video: true, playing, muted };
   }
 
   // The countdown is over. Called off: a video that was playing plays on (resume).
@@ -870,7 +865,7 @@
   // action: 'hold' (the countdown starts), 'release' (it's called off), 'play' (the recording starts, or
   // goes on: m.from 'start' | 'resume'), 'pause' or 'stop'.
   async function followRecording(action, rect, m = {}) {
-    if (action === 'hold') return rect ? holdVideo(rect, Math.max(1, (m.limit || 90) - 0.5)) : { video: false };
+    if (action === 'hold') return rect ? holdVideo(rect) : { video: false };
     if (action === 'release') {
       unhold(true);
       return { video: false };

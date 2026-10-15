@@ -36,7 +36,7 @@ Click the icon (or press **Alt+Shift+S**). The bar appears at the top of the pag
 | 🎥 Screen recording | Make a video. |
 | ▭ Select an area | Drag a box around what you want. |
 | ▤ Select a post, image or video | Click the thing you want, and the box fits it. |
-| ● Record | Start recording your area, after a 2-second countdown. A video in your area starts playing at the same moment, and the recording stops when the video ends. One already playing (on X or TikTok, say) waits during the countdown, and a clip short enough to fit starts again from the beginning. A recording stops by itself at 90 seconds. |
+| ● Record | Start recording your area, after a 2-second countdown. A video in your area plays from where it is at the same moment, so you can clip any part of it; one already playing (on X or TikTok, say) waits there during the countdown. The recording stops if the video ends, and by itself at 90 seconds. |
 | ❚❚ Pause | Pause the recording, and a video in your area with it. Press again to carry on. |
 | ■ Stop | Stop the recording (**Esc** does too). A video in your area pauses. |
 | 0:00 | How long the recording is. |
